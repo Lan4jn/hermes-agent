@@ -2,6 +2,7 @@
 OpenAI-compatible API server platform adapter.
 
 Exposes an HTTP server with endpoints:
+- POST /message                     — lightweight node-to-node messaging / command API
 - POST /v1/chat/completions        — OpenAI Chat Completions format (stateless; opt-in session continuity via X-Hermes-Session-Id header; opt-in long-term memory scoping via X-Hermes-Session-Key header)
 - POST /v1/responses               — OpenAI Responses API format (stateful via previous_response_id; X-Hermes-Session-Key supported)
 - GET  /v1/responses/{response_id} — Retrieve a stored response
@@ -13,6 +14,8 @@ Exposes an HTTP server with endpoints:
 - GET  /v1/runs/{run_id}/events    — SSE stream of structured lifecycle events
 - POST /v1/runs/{run_id}/approval — resolve a pending run approval
 - POST /v1/runs/{run_id}/stop       — interrupt a running agent
+- GET  /api/message/sessions        — list /message conversation history
+- GET  /api/message/sessions/{id}   — fetch one /message conversation
 - GET  /health                     — health check
 - GET  /health/detailed            — rich status for cross-container dashboard probing
 
@@ -61,6 +64,8 @@ MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversation
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
+DEFAULT_MESSAGE_API_TOKEN_TTL_SECONDS = 3600
+MESSAGE_API_SESSION_KEY_PREFIX = "message_api:"
 
 
 def _coerce_port(value: Any, default: int = DEFAULT_PORT) -> int:
@@ -398,6 +403,44 @@ class ResponseStore:
         return row[0] if row else 0
 
 
+class _MessageTokenStore:
+    """Short-lived bearer-like tokens for /message command authorization."""
+
+    def __init__(self):
+        self._tokens: Dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    async def issue(self, ttl_seconds: int) -> tuple[str, float]:
+        ttl = int(ttl_seconds) if isinstance(ttl_seconds, int) and ttl_seconds > 0 else DEFAULT_MESSAGE_API_TOKEN_TTL_SECONDS
+        token = uuid.uuid4().hex + uuid.uuid4().hex[:16]
+        expires_at = time.time() + ttl
+        async with self._lock:
+            self._tokens[token] = expires_at
+            self._prune_locked()
+        return token, expires_at
+
+    async def validate(self, token: str) -> bool:
+        token = str(token or "").strip()
+        if not token:
+            return False
+        now = time.time()
+        async with self._lock:
+            expires_at = self._tokens.get(token)
+            if expires_at is None:
+                return False
+            if expires_at <= now:
+                self._tokens.pop(token, None)
+                return False
+            self._prune_locked()
+            return True
+
+    def _prune_locked(self) -> None:
+        now = time.time()
+        expired = [token for token, expires_at in self._tokens.items() if expires_at <= now]
+        for token in expired:
+            self._tokens.pop(token, None)
+
+
 # ---------------------------------------------------------------------------
 # CORS middleware
 # ---------------------------------------------------------------------------
@@ -616,6 +659,17 @@ class APIServerAdapter(BasePlatformAdapter):
         # in-flight run by run_id.
         self._run_approval_sessions: Dict[str, str] = {}
         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+        self._message_token_store = _MessageTokenStore()
+        message_api_cfg = extra.get("message_api", {})
+        self._message_api_cfg = message_api_cfg if isinstance(message_api_cfg, dict) else {}
+        self._message_api_enabled = bool(self._message_api_cfg.get("enabled", False))
+        self._message_api_webui_history_enabled = bool(
+            self._message_api_cfg.get("webui_history_enabled", False)
+        )
+        self._message_api_keys = self._parse_message_api_keys(self._message_api_cfg.get("api_keys", []))
+        self._message_api_token_ttl_seconds = self._parse_message_api_ttl(
+            self._message_api_cfg.get("token_ttl_seconds", DEFAULT_MESSAGE_API_TOKEN_TTL_SECONDS)
+        )
 
     @staticmethod
     def _parse_cors_origins(value: Any) -> tuple[str, ...]:
@@ -682,6 +736,64 @@ class APIServerAdapter(BasePlatformAdapter):
 
         return "*" in self._cors_origins or origin in self._cors_origins
 
+    @staticmethod
+    def _parse_message_api_keys(raw: Any) -> list[str]:
+        if not raw:
+            return []
+        keys: list[str] = []
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                if isinstance(item, dict):
+                    candidate = item.get("key")
+                else:
+                    candidate = item
+                candidate = str(candidate or "").strip()
+                if candidate:
+                    keys.append(candidate)
+        return keys
+
+    @staticmethod
+    def _parse_message_api_ttl(raw: Any) -> int:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+        return DEFAULT_MESSAGE_API_TOKEN_TTL_SECONDS
+
+    @staticmethod
+    def _message_api_user_marker(sender_id: str) -> str:
+        sender = str(sender_id or "").strip() or "remote-peer"
+        return f"{MESSAGE_API_SESSION_KEY_PREFIX}{sender}"
+
+    @staticmethod
+    def _message_api_session_key(session_id: str) -> str:
+        sid = str(session_id or "").strip() or "remote"
+        return f"{MESSAGE_API_SESSION_KEY_PREFIX}{sid}"
+
+    @staticmethod
+    def _message_api_session_id_from_request(body: Dict[str, Any]) -> str:
+        session_id = str(body.get("session_id") or "").strip()
+        if session_id:
+            return session_id
+        sender_id = str(body.get("sender_id") or "").strip()
+        if sender_id:
+            return sender_id
+        return "remote"
+
+    def _is_message_api_session_row(self, row: Dict[str, Any]) -> bool:
+        if not isinstance(row, dict):
+            return False
+        if row.get("source") != "api_server":
+            return False
+        return str(row.get("user_id") or "").startswith(MESSAGE_API_SESSION_KEY_PREFIX)
+
+    def _message_api_disabled_response(self) -> "web.Response":
+        return web.json_response({"error": "message api is disabled"}, status=404)
+
     # ------------------------------------------------------------------
     # Auth helper
     # ------------------------------------------------------------------
@@ -707,6 +819,15 @@ class APIServerAdapter(BasePlatformAdapter):
             {"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}},
             status=401,
         )
+
+    def _has_valid_bearer_auth(self, request: "web.Request") -> bool:
+        if not self._api_key:
+            return False
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return False
+        token = auth_header[7:].strip()
+        return bool(token) and hmac.compare_digest(token, self._api_key)
 
     # ------------------------------------------------------------------
     # Session header helpers
@@ -791,6 +912,35 @@ class APIServerAdapter(BasePlatformAdapter):
                 logger.debug("SessionDB unavailable for API server: %s", e)
         return self._session_db
 
+    def _execute_message_api_command(self, command: str, session_key: Optional[str] = None) -> Dict[str, Any]:
+        """Execute an authorized /message command through Hermes' terminal runtime."""
+        from tools.terminal_tool import terminal_tool
+
+        result = terminal_tool(
+            command=command,
+            task_id=(session_key or "message-api"),
+            force=True,
+        )
+        if isinstance(result, str):
+            try:
+                parsed = json.loads(result)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+            return {"output": result, "exit_code": 0, "error": "", "status": "completed"}
+        if isinstance(result, dict):
+            return result
+        return {"output": str(result), "exit_code": 0, "error": "", "status": "completed"}
+
+    @staticmethod
+    def _format_message_session_timestamp(value: Any) -> str:
+        try:
+            ts = float(value)
+        except (TypeError, ValueError):
+            return ""
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
     # ------------------------------------------------------------------
     # Agent creation helper
     # ------------------------------------------------------------------
@@ -804,6 +954,8 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_start_callback=None,
         tool_complete_callback=None,
         gateway_session_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user_name: Optional[str] = None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -855,6 +1007,8 @@ class APIServerAdapter(BasePlatformAdapter):
             fallback_model=fallback_model,
             reasoning_config=reasoning_config,
             gateway_session_key=gateway_session_key,
+            user_id=user_id,
+            user_name=user_name,
         )
         return agent
 
@@ -938,6 +1092,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ),
             },
             "features": {
+                "message_api": self._message_api_enabled,
                 "chat_completions": True,
                 "chat_completions_streaming": True,
                 "responses_api": True,
@@ -956,6 +1111,9 @@ class APIServerAdapter(BasePlatformAdapter):
             "endpoints": {
                 "health": {"method": "GET", "path": "/health"},
                 "health_detailed": {"method": "GET", "path": "/health/detailed"},
+                "message_api": {"method": "POST", "path": "/message"},
+                "message_sessions": {"method": "GET", "path": "/api/message/sessions"},
+                "message_session": {"method": "GET", "path": "/api/message/sessions/{session_id}"},
                 "models": {"method": "GET", "path": "/v1/models"},
                 "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
                 "responses": {"method": "POST", "path": "/v1/responses"},
@@ -966,6 +1124,166 @@ class APIServerAdapter(BasePlatformAdapter):
                 "run_stop": {"method": "POST", "path": "/v1/runs/{run_id}/stop"},
             },
         })
+
+    async def _handle_message_api(self, request: "web.Request") -> "web.Response":
+        """POST /message — lightweight node-to-node messaging + command API."""
+        if not self._message_api_enabled:
+            return self._message_api_disabled_response()
+
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        session_id = self._message_api_session_id_from_request(body)
+        sender_id = str(body.get("sender_id") or "").strip() or "remote-peer"
+        sender_name = str(body.get("sender_display_name") or "").strip()
+        message = str(body.get("message") or "").strip()
+        command = str(body.get("command") or "").strip()
+        body_api_key = str(body.get("api_key") or "").strip()
+        exec_token = str(body.get("exec_token") or "").strip()
+
+        if not any((message, command, body_api_key, exec_token)):
+            return web.json_response(
+                {"error": "message, command, api_key, or exec_token is required"},
+                status=400,
+            )
+
+        response_payload: Dict[str, Any] = {
+            "session_id": session_id,
+            "command": {
+                "requested": bool(command),
+                "authorized": False,
+                "executed": False,
+            },
+        }
+
+        bearer_authorized = self._has_valid_bearer_auth(request)
+        body_key_authorized = any(
+            body_api_key and hmac.compare_digest(body_api_key, key)
+            for key in self._message_api_keys
+        )
+        token_authorized = await self._message_token_store.validate(exec_token) if exec_token else False
+        command_authorized = bearer_authorized or body_key_authorized or token_authorized
+
+        if body_key_authorized:
+            token, expires_at = await self._message_token_store.issue(self._message_api_token_ttl_seconds)
+            response_payload["exec_token"] = token
+            response_payload["exec_token_expires_at"] = self._format_message_session_timestamp(expires_at)
+
+        if message:
+            try:
+                result, _usage = await self._run_agent(
+                    user_message=message,
+                    conversation_history=[],
+                    session_id=session_id,
+                    gateway_session_key=self._message_api_session_key(session_id),
+                    user_id=self._message_api_user_marker(sender_id),
+                    user_name=sender_name or None,
+                )
+            except Exception as exc:
+                response_payload["error"] = str(exc)
+                return web.json_response(response_payload, status=500)
+
+            reply = result.get("final_response") or result.get("error") or ""
+            response_payload["reply"] = reply
+            response_payload["session_id"] = result.get("session_id", session_id)
+
+        if command:
+            response_payload["command"]["authorized"] = command_authorized
+            if not command_authorized:
+                response_payload["command"]["error"] = (
+                    "command execution requires a valid api_key or unexpired exec_token"
+                )
+                status = 401 if not message else 200
+                return web.json_response(response_payload, status=status)
+
+            command_result = self._execute_message_api_command(
+                command,
+                session_key=self._message_api_session_key(session_id),
+            )
+            response_payload["command"]["executed"] = True
+            output = str(command_result.get("output") or "").strip()
+            err_text = str(command_result.get("error") or "").strip()
+            exit_code = command_result.get("exit_code", 0)
+            status_text = str(command_result.get("status") or "")
+            is_error = bool(err_text) or status_text in {"blocked", "error"} or (isinstance(exit_code, int) and exit_code != 0)
+            response_payload["command"]["is_error"] = is_error
+            response_payload["command"]["output"] = output
+            if err_text:
+                response_payload["command"]["error"] = err_text
+
+        return web.json_response(response_payload)
+
+    async def _handle_list_message_sessions(self, request: "web.Request") -> "web.Response":
+        """GET /api/message/sessions — list /message-only conversations."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        if not self._message_api_enabled or not self._message_api_webui_history_enabled:
+            return self._message_api_disabled_response()
+
+        db = self._ensure_session_db()
+        if db is None:
+            return web.json_response([], status=200)
+
+        rows = db.list_sessions_rich(source="api_server", limit=200, order_by_last_active=True)
+        items = []
+        for row in rows:
+            if not self._is_message_api_session_row(row):
+                continue
+            items.append({
+                "id": row.get("id", ""),
+                "title": row.get("title") or row.get("id", ""),
+                "preview": row.get("preview", ""),
+                "message_count": int(row.get("message_count") or 0),
+                "created": self._format_message_session_timestamp(row.get("started_at")),
+                "updated": self._format_message_session_timestamp(row.get("last_active") or row.get("started_at")),
+            })
+        return web.json_response(items)
+
+    async def _handle_get_message_session(self, request: "web.Request") -> "web.Response":
+        """GET /api/message/sessions/{session_id} — detail for one /message session."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        if not self._message_api_enabled or not self._message_api_webui_history_enabled:
+            return self._message_api_disabled_response()
+
+        session_id = request.match_info.get("session_id", "").strip()
+        if not session_id:
+            return web.json_response({"error": "missing session id"}, status=400)
+
+        db = self._ensure_session_db()
+        if db is None:
+            return web.json_response({"error": "session database unavailable"}, status=404)
+
+        row = db.get_session(session_id)
+        if not row or not self._is_message_api_session_row(row):
+            return web.json_response({"error": "message session not found"}, status=404)
+
+        history = db.get_messages_as_conversation(session_id)
+        visible = []
+        for msg in history:
+            role = msg.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            visible.append({
+                "role": role,
+                "content": str(msg.get("content") or ""),
+            })
+
+        payload = {
+            "id": session_id,
+            "messages": visible,
+            "summary": row.get("title") or "",
+            "created": self._format_message_session_timestamp(row.get("started_at")),
+            "updated": self._format_message_session_timestamp(row.get("ended_at") or row.get("started_at")),
+        }
+        return web.json_response(payload)
 
     async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
         """POST /v1/chat/completions — OpenAI Chat Completions format."""
@@ -2684,6 +3002,8 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_complete_callback=None,
         agent_ref: Optional[list] = None,
         gateway_session_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user_name: Optional[str] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -2707,6 +3027,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_start_callback=tool_start_callback,
                 tool_complete_callback=tool_complete_callback,
                 gateway_session_key=gateway_session_key,
+                user_id=user_id,
+                user_name=user_name,
             )
             if agent_ref is not None:
                 agent_ref[0] = agent
@@ -3340,10 +3662,13 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/health", self._handle_health)
             self._app.router.add_get("/v1/models", self._handle_models)
             self._app.router.add_get("/v1/capabilities", self._handle_capabilities)
+            self._app.router.add_post("/message", self._handle_message_api)
             self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)
             self._app.router.add_post("/v1/responses", self._handle_responses)
             self._app.router.add_get("/v1/responses/{response_id}", self._handle_get_response)
             self._app.router.add_delete("/v1/responses/{response_id}", self._handle_delete_response)
+            self._app.router.add_get("/api/message/sessions", self._handle_list_message_sessions)
+            self._app.router.add_get("/api/message/sessions/{session_id}", self._handle_get_message_session)
             # Cron jobs management API
             self._app.router.add_get("/api/jobs", self._handle_list_jobs)
             self._app.router.add_post("/api/jobs", self._handle_create_job)

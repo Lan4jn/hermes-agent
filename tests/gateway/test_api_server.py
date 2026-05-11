@@ -336,13 +336,15 @@ class TestAuth:
 # ---------------------------------------------------------------------------
 
 
-def _make_adapter(api_key: str = "", cors_origins=None) -> APIServerAdapter:
+def _make_adapter(api_key: str = "", cors_origins=None, message_api=None) -> APIServerAdapter:
     """Create an adapter with optional API key."""
     extra = {}
     if api_key:
         extra["key"] = api_key
     if cors_origins is not None:
         extra["cors_origins"] = cors_origins
+    if message_api is not None:
+        extra["message_api"] = message_api
     config = PlatformConfig(enabled=True, extra=extra)
     return APIServerAdapter(config)
 
@@ -361,6 +363,9 @@ def _create_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_post("/v1/responses", adapter._handle_responses)
     app.router.add_get("/v1/responses/{response_id}", adapter._handle_get_response)
     app.router.add_delete("/v1/responses/{response_id}", adapter._handle_delete_response)
+    app.router.add_post("/message", adapter._handle_message_api)
+    app.router.add_get("/api/message/sessions", adapter._handle_list_message_sessions)
+    app.router.add_get("/api/message/sessions/{session_id}", adapter._handle_get_message_session)
     return app
 
 
@@ -2972,6 +2977,219 @@ class TestSessionKeyHeader:
                 json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
             )
             assert resp.status == 403
+
+
+# ---------------------------------------------------------------------------
+# /message endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestMessageAPIEndpoint:
+    @pytest.mark.asyncio
+    async def test_message_api_disabled_returns_404(self, auth_adapter):
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.post("/message", json={"message": "hi"})
+            assert resp.status == 404
+            data = await resp.json()
+            assert "disabled" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_message_request_returns_reply_and_session(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        app = _create_app(auth_adapter)
+        mock_result = {"final_response": "Hello from Hermes", "messages": [], "api_calls": 1}
+
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                resp = await cli.post(
+                    "/message",
+                    json={
+                        "session_id": "peer-session",
+                        "sender_id": "peer-a",
+                        "sender_display_name": "Peer A",
+                        "message": "hello",
+                    },
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["session_id"] == "peer-session"
+                assert data["reply"] == "Hello from Hermes"
+                assert data["command"]["requested"] is False
+                call_kwargs = mock_run.call_args.kwargs
+                assert call_kwargs["user_message"] == "hello"
+                assert call_kwargs["session_id"] == "peer-session"
+                assert call_kwargs["gateway_session_key"] == "message_api:peer-session"
+                assert call_kwargs["user_id"] == "message_api:peer-a"
+                assert call_kwargs["user_name"] == "Peer A"
+
+    @pytest.mark.asyncio
+    async def test_message_command_with_api_key_issues_exec_token_and_executes(self):
+        adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={
+                "enabled": True,
+                "api_keys": ["node-key-1"],
+                "token_ttl_seconds": 3600,
+            },
+        )
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_execute_message_api_command") as mock_exec:
+                mock_exec.return_value = {
+                    "output": "hello\n",
+                    "exit_code": 0,
+                    "error": "",
+                    "status": "completed",
+                }
+                resp = await cli.post(
+                    "/message",
+                    json={"command": "echo hello", "api_key": "node-key-1"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["exec_token"]
+                assert data["exec_token_expires_at"]
+                assert data["command"]["requested"] is True
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                assert data["command"]["output"] == "hello"
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_accepts_bearer_auth_without_body_api_key(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                mock_exec.return_value = {
+                    "output": "ok",
+                    "exit_code": 0,
+                    "error": "",
+                    "status": "completed",
+                }
+                resp = await cli.post(
+                    "/message",
+                    headers={"Authorization": "Bearer sk-secret"},
+                    json={"command": "pwd"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_rejects_unauthorized_exec(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    json={"command": "rm -rf /tmp/example"},
+                )
+                assert resp.status == 401
+                data = await resp.json()
+                assert data["command"]["requested"] is True
+                assert data["command"]["authorized"] is False
+                assert "requires" in data["command"]["error"]
+                mock_exec.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# /api/message/sessions endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestMessageAPISessionEndpoints:
+    @pytest.mark.asyncio
+    async def test_list_message_sessions_filters_marker_sessions(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        mock_db = MagicMock()
+        mock_db.list_sessions_rich.return_value = [
+            {
+                "id": "sess-a",
+                "source": "api_server",
+                "user_id": "message_api:peer-a",
+                "title": None,
+                "preview": "hello",
+                "message_count": 2,
+                "started_at": 1_700_000_000,
+                "last_active": 1_700_000_010,
+            },
+            {
+                "id": "sess-b",
+                "source": "api_server",
+                "user_id": "plain-user",
+                "title": None,
+                "preview": "ignore me",
+                "message_count": 1,
+                "started_at": 1_700_000_100,
+                "last_active": 1_700_000_110,
+            },
+        ]
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get(
+                "/api/message/sessions",
+                headers={"Authorization": "Bearer sk-secret"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert len(data) == 1
+            assert data[0]["id"] == "sess-a"
+            assert data[0]["preview"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_get_message_session_returns_visible_messages(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        mock_db = MagicMock()
+        mock_db.get_session.return_value = {
+            "id": "sess-a",
+            "source": "api_server",
+            "user_id": "message_api:peer-a",
+            "started_at": 1_700_000_000,
+        }
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+            {"role": "tool", "content": '{"ok":true}'},
+        ]
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get(
+                "/api/message/sessions/sess-a",
+                headers={"Authorization": "Bearer sk-secret"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["id"] == "sess-a"
+            assert data["messages"] == [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "world"},
+            ]
 
     @pytest.mark.asyncio
     async def test_session_key_rejects_control_chars(self, auth_adapter):

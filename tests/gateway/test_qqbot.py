@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -1505,6 +1506,106 @@ class TestProcessQuotedContext:
             {"message_type": "not-a-number", "msg_elements": [{"content": "x"}]}
         )
         assert out["quote_block"] == ""
+
+
+class TestQQDocumentIngestion:
+    def _make_adapter(self):
+        from gateway.platforms.qqbot.adapter import QQAdapter
+        return QQAdapter(_make_config(app_id="a", client_secret="b"))
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_supported_text_document_injects_content(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "notes.txt"
+        doc_path.write_text("hello from qq", encoding="utf-8")
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "text/plain",
+                "url": "https://qq-cdn/notes.txt",
+                "filename": "notes.txt",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["document_media_types"] == ["text/plain"]
+        assert result["attachment_info"] == "[Attachment: notes.txt]"
+        assert result["text_injections"]
+        assert "hello from qq" in result["text_injections"][0]
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_empty_content_type_jpg_still_treated_as_image(self, tmp_path):
+        adapter = self._make_adapter()
+        img_path = tmp_path / "photo.jpg"
+        img_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+        async def fake_download(url, content_type):
+            return str(img_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "",
+                "url": "https://qq-cdn/photo",
+                "filename": "photo.jpg",
+            }
+        ])
+
+        assert result["image_urls"] == [str(img_path)]
+        assert result["image_media_types"] == ["image/jpeg"]
+        assert result["document_urls"] == []
+        assert result["attachment_info"] == ""
+
+    @pytest.mark.asyncio
+    async def test_c2c_document_event_reaches_agent_as_document(self):
+        from gateway.platforms.base import MessageType
+
+        adapter = self._make_adapter()
+        seen = []
+
+        async def fake_handle(event):
+            seen.append(event)
+
+        async def fake_process(_atts):
+            return {
+                "image_urls": [],
+                "image_media_types": [],
+                "document_urls": ["/tmp/qq-report.pdf"],
+                "document_media_types": ["application/pdf"],
+                "voice_transcripts": [],
+                "text_injections": [],
+                "attachment_info": "[Attachment: report.pdf]",
+            }
+
+        adapter.handle_message = fake_handle  # type: ignore[assignment]
+        adapter._process_attachments = fake_process  # type: ignore[assignment]
+
+        await adapter._handle_c2c_message(
+            {
+                "attachments": [
+                    {
+                        "content_type": "application/pdf",
+                        "url": "https://qq-cdn/report.pdf",
+                        "filename": "report.pdf",
+                    }
+                ]
+            },
+            msg_id="m1",
+            content="",
+            author={"user_openid": "user-1"},
+            timestamp="1710000000",
+        )
+
+        assert len(seen) == 1
+        event = seen[0]
+        assert event.message_type == MessageType.DOCUMENT
+        assert event.media_urls == ["/tmp/qq-report.pdf"]
+        assert event.media_types == ["application/pdf"]
+        assert "report.pdf" in event.text
 
 
 class TestMergeQuoteInto:

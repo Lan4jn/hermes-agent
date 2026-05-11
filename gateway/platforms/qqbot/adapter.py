@@ -37,6 +37,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -66,6 +67,7 @@ from gateway.platforms.base import (
     MessageEvent,
     MessageType,
     SendResult,
+    SUPPORTED_DOCUMENT_TYPES,
     _ssrf_redirect_guard,
     cache_document_from_bytes,
     cache_image_from_bytes,
@@ -1108,40 +1110,28 @@ class QQAdapter(BasePlatformAdapter):
 
         # Process all attachments uniformly (images, voice, files)
         att_result = await self._process_attachments(attachments_raw)
-        image_urls = att_result["image_urls"]
-        image_media_types = att_result["image_media_types"]
-        voice_transcripts = att_result["voice_transcripts"]
-        attachment_info = att_result["attachment_info"]
-
-        # Append voice transcripts to the text body
-        if voice_transcripts:
-            voice_block = "\n".join(voice_transcripts)
-            text = (
-                (text + "\n\n" + voice_block).strip() if text.strip() else voice_block
-            )
-        # Append non-media attachment info
-        if attachment_info:
-            text = (
-                (text + "\n\n" + attachment_info).strip()
-                if text.strip()
-                else attachment_info
-            )
+        text, media_urls, media_types, message_type = self._compose_attachment_payload(text, att_result)
 
         logger.info(
-            "[%s] After processing: images=%d, voice=%d",
+            "[%s] After processing: images=%d, voice=%d, documents=%d",
             self._log_tag,
-            len(image_urls),
-            len(voice_transcripts),
+            len(att_result.get("image_urls") or []),
+            len(att_result.get("voice_transcripts") or []),
+            len(att_result.get("document_urls") or []),
         )
 
         # Merge any quoted-message context (message_type=103 → msg_elements[0]).
         quoted = await self._process_quoted_context(d)
         text = self._merge_quote_into(text, quoted["quote_block"])
         if quoted["image_urls"]:
-            image_urls = image_urls + quoted["image_urls"]
-            image_media_types = image_media_types + quoted["image_media_types"]
+            media_urls = media_urls + quoted["image_urls"]
+            media_types = media_types + quoted["image_media_types"]
+            if message_type == MessageType.TEXT:
+                message_type = self._detect_message_type(
+                    quoted["image_urls"], quoted["image_media_types"]
+                )
 
-        if not text.strip() and not image_urls:
+        if not text.strip() and not media_urls:
             return
 
         self._chat_type_map[user_openid] = "c2c"
@@ -1152,11 +1142,11 @@ class QQAdapter(BasePlatformAdapter):
                 chat_type="dm",
             ),
             text=text,
-            message_type=self._detect_message_type(image_urls, image_media_types),
+            message_type=message_type,
             raw_message=d,
             message_id=msg_id,
-            media_urls=image_urls,
-            media_types=image_media_types,
+            media_urls=media_urls,
+            media_types=media_types,
             timestamp=self._parse_qq_timestamp(timestamp),
         )
         await self.handle_message(event)
@@ -1181,32 +1171,20 @@ class QQAdapter(BasePlatformAdapter):
         # Strip the @bot mention prefix from content
         text = self._strip_at_mention(content)
         att_result = await self._process_attachments(d.get("attachments"))
-        image_urls = att_result["image_urls"]
-        image_media_types = att_result["image_media_types"]
-        voice_transcripts = att_result["voice_transcripts"]
-        attachment_info = att_result["attachment_info"]
-
-        # Append voice transcripts
-        if voice_transcripts:
-            voice_block = "\n".join(voice_transcripts)
-            text = (
-                (text + "\n\n" + voice_block).strip() if text.strip() else voice_block
-            )
-        if attachment_info:
-            text = (
-                (text + "\n\n" + attachment_info).strip()
-                if text.strip()
-                else attachment_info
-            )
+        text, media_urls, media_types, message_type = self._compose_attachment_payload(text, att_result)
 
         # Merge any quoted-message context (message_type=103 → msg_elements[0]).
         quoted = await self._process_quoted_context(d)
         text = self._merge_quote_into(text, quoted["quote_block"])
         if quoted["image_urls"]:
-            image_urls = image_urls + quoted["image_urls"]
-            image_media_types = image_media_types + quoted["image_media_types"]
+            media_urls = media_urls + quoted["image_urls"]
+            media_types = media_types + quoted["image_media_types"]
+            if message_type == MessageType.TEXT:
+                message_type = self._detect_message_type(
+                    quoted["image_urls"], quoted["image_media_types"]
+                )
 
-        if not text.strip() and not image_urls:
+        if not text.strip() and not media_urls:
             return
 
         self._chat_type_map[group_openid] = "group"
@@ -1217,11 +1195,11 @@ class QQAdapter(BasePlatformAdapter):
                 chat_type="group",
             ),
             text=text,
-            message_type=self._detect_message_type(image_urls, image_media_types),
+            message_type=message_type,
             raw_message=d,
             message_id=msg_id,
-            media_urls=image_urls,
-            media_types=image_media_types,
+            media_urls=media_urls,
+            media_types=media_types,
             timestamp=self._parse_qq_timestamp(timestamp),
         )
         await self.handle_message(event)
@@ -1256,31 +1234,20 @@ class QQAdapter(BasePlatformAdapter):
 
         text = content
         att_result = await self._process_attachments(d.get("attachments"))
-        image_urls = att_result["image_urls"]
-        image_media_types = att_result["image_media_types"]
-        voice_transcripts = att_result["voice_transcripts"]
-        attachment_info = att_result["attachment_info"]
-
-        if voice_transcripts:
-            voice_block = "\n".join(voice_transcripts)
-            text = (
-                (text + "\n\n" + voice_block).strip() if text.strip() else voice_block
-            )
-        if attachment_info:
-            text = (
-                (text + "\n\n" + attachment_info).strip()
-                if text.strip()
-                else attachment_info
-            )
+        text, media_urls, media_types, message_type = self._compose_attachment_payload(text, att_result)
 
         # Merge any quoted-message context (message_type=103 → msg_elements[0]).
         quoted = await self._process_quoted_context(d)
         text = self._merge_quote_into(text, quoted["quote_block"])
         if quoted["image_urls"]:
-            image_urls = image_urls + quoted["image_urls"]
-            image_media_types = image_media_types + quoted["image_media_types"]
+            media_urls = media_urls + quoted["image_urls"]
+            media_types = media_types + quoted["image_media_types"]
+            if message_type == MessageType.TEXT:
+                message_type = self._detect_message_type(
+                    quoted["image_urls"], quoted["image_media_types"]
+                )
 
-        if not text.strip() and not image_urls:
+        if not text.strip() and not media_urls:
             return
 
         self._chat_type_map[channel_id] = "guild"
@@ -1292,11 +1259,11 @@ class QQAdapter(BasePlatformAdapter):
                 chat_type="group",
             ),
             text=text,
-            message_type=self._detect_message_type(image_urls, image_media_types),
+            message_type=message_type,
             raw_message=d,
             message_id=msg_id,
-            media_urls=image_urls,
-            media_types=image_media_types,
+            media_urls=media_urls,
+            media_types=media_types,
             timestamp=self._parse_qq_timestamp(timestamp),
         )
         await self.handle_message(event)
@@ -1327,31 +1294,20 @@ class QQAdapter(BasePlatformAdapter):
 
         text = content
         att_result = await self._process_attachments(d.get("attachments"))
-        image_urls = att_result["image_urls"]
-        image_media_types = att_result["image_media_types"]
-        voice_transcripts = att_result["voice_transcripts"]
-        attachment_info = att_result["attachment_info"]
-
-        if voice_transcripts:
-            voice_block = "\n".join(voice_transcripts)
-            text = (
-                (text + "\n\n" + voice_block).strip() if text.strip() else voice_block
-            )
-        if attachment_info:
-            text = (
-                (text + "\n\n" + attachment_info).strip()
-                if text.strip()
-                else attachment_info
-            )
+        text, media_urls, media_types, message_type = self._compose_attachment_payload(text, att_result)
 
         # Merge any quoted-message context (message_type=103 → msg_elements[0]).
         quoted = await self._process_quoted_context(d)
         text = self._merge_quote_into(text, quoted["quote_block"])
         if quoted["image_urls"]:
-            image_urls = image_urls + quoted["image_urls"]
-            image_media_types = image_media_types + quoted["image_media_types"]
+            media_urls = media_urls + quoted["image_urls"]
+            media_types = media_types + quoted["image_media_types"]
+            if message_type == MessageType.TEXT:
+                message_type = self._detect_message_type(
+                    quoted["image_urls"], quoted["image_media_types"]
+                )
 
-        if not text.strip() and not image_urls:
+        if not text.strip() and not media_urls:
             return
 
         self._chat_type_map[guild_id] = "dm"
@@ -1362,11 +1318,11 @@ class QQAdapter(BasePlatformAdapter):
                 chat_type="dm",
             ),
             text=text,
-            message_type=self._detect_message_type(image_urls, image_media_types),
+            message_type=message_type,
             raw_message=d,
             message_id=msg_id,
-            media_urls=image_urls,
-            media_types=image_media_types,
+            media_urls=media_urls,
+            media_types=media_types,
             timestamp=self._parse_qq_timestamp(timestamp),
         )
         await self.handle_message(event)
@@ -1502,6 +1458,49 @@ class QQAdapter(BasePlatformAdapter):
         )
         return MessageType.TEXT
 
+    @staticmethod
+    def _compose_attachment_payload(
+            text: str,
+            att_result: Dict[str, Any],
+    ) -> tuple[str, List[str], List[str], MessageType]:
+        """Merge processed attachment outputs into one event payload.
+
+        QQ may deliver a single message containing a mix of images, voice,
+        and files. We keep one MessageEvent, attach every cached local path in
+        order, and choose MessageType.DOCUMENT whenever any documents are
+        present so gateway/run.py injects file context for the agent.
+        """
+        image_urls = list(att_result.get("image_urls") or [])
+        image_media_types = list(att_result.get("image_media_types") or [])
+        document_urls = list(att_result.get("document_urls") or [])
+        document_media_types = list(att_result.get("document_media_types") or [])
+        voice_transcripts = list(att_result.get("voice_transcripts") or [])
+        text_injections = list(att_result.get("text_injections") or [])
+        attachment_info = str(att_result.get("attachment_info") or "")
+
+        blocks: List[str] = []
+        base_text = (text or "").strip()
+        if voice_transcripts:
+            blocks.append("\n".join(voice_transcripts))
+        if text_injections:
+            blocks.append("\n\n".join(t for t in text_injections if t))
+        if attachment_info:
+            blocks.append(attachment_info)
+
+        if blocks:
+            suffix = "\n\n".join(blocks).strip()
+            text = (base_text + "\n\n" + suffix).strip() if base_text else suffix
+        else:
+            text = base_text
+
+        media_urls = image_urls + document_urls
+        media_types = image_media_types + document_media_types
+        if document_urls:
+            message_type = MessageType.DOCUMENT
+        else:
+            message_type = QQAdapter._detect_message_type(image_urls, image_media_types)
+        return text, media_urls, media_types, message_type
+
     async def _process_attachments(
             self,
             attachments: Any,
@@ -1514,20 +1513,29 @@ class QQAdapter(BasePlatformAdapter):
         Returns a dict with:
         - image_urls: list[str]  — cached local image paths
         - image_media_types: list[str] — MIME types of cached images
+        - document_urls: list[str] — cached local document/file paths
+        - document_media_types: list[str] — MIME types of cached documents/files
         - voice_transcripts: list[str] — STT transcripts for voice messages
+        - text_injections: list[str] — decoded text-file contents injected into the prompt
         - attachment_info: str — text description of non-image, non-voice attachments
         """
         if not isinstance(attachments, list):
             return {
                 "image_urls": [],
                 "image_media_types": [],
+                "document_urls": [],
+                "document_media_types": [],
                 "voice_transcripts": [],
+                "text_injections": [],
                 "attachment_info": "",
             }
 
         image_urls: List[str] = []
         image_media_types: List[str] = []
+        document_urls: List[str] = []
+        document_media_types: List[str] = []
         voice_transcripts: List[str] = []
+        text_injections: List[str] = []
         other_attachments: List[str] = []
 
         for att in attachments:
@@ -1537,6 +1545,8 @@ class QQAdapter(BasePlatformAdapter):
             ct = str(att.get("content_type", "")).strip().lower()
             url_raw = str(att.get("url", "")).strip()
             filename = str(att.get("filename", ""))
+            guessed_mime, _ = mimetypes.guess_type(filename or "")
+            guessed_mime = (guessed_mime or "").lower()
             if url_raw.startswith("//"):
                 url = f"https:{url_raw}"
             elif url_raw:
@@ -1579,13 +1589,13 @@ class QQAdapter(BasePlatformAdapter):
                 else:
                     logger.warning("[%s] Voice STT failed for %s", self._log_tag, url[:60])
                     voice_transcripts.append("[Voice] [语音识别失败]")
-            elif ct.startswith("image/"):
+            elif ct.startswith("image/") or guessed_mime.startswith("image/"):
                 # Image: download and cache locally.
                 try:
                     cached_path = await self._download_and_cache(url, ct)
                     if cached_path and os.path.isfile(cached_path):
                         image_urls.append(cached_path)
-                        image_media_types.append(ct or "image/jpeg")
+                        image_media_types.append(ct or guessed_mime or "image/jpeg")
                     elif cached_path:
                         logger.warning(
                             "[%s] Cached image path does not exist: %s",
@@ -1595,11 +1605,41 @@ class QQAdapter(BasePlatformAdapter):
                 except Exception as exc:
                     logger.debug("[%s] Failed to cache image: %s", self._log_tag, exc)
             else:
-                # Other attachments (video, file, etc.): record as text.
+                # Other attachments (video, file, etc.): cache when the
+                # extension is supported, otherwise surface as text only.
                 try:
                     cached_path = await self._download_and_cache(url, ct)
-                    if cached_path:
-                        other_attachments.append(f"[Attachment: {filename or ct}]")
+                    if not cached_path:
+                        continue
+
+                    display_name = filename or Path(cached_path).name or ct or "attachment"
+                    ext = Path(display_name).suffix.lower()
+                    if not ext and ct:
+                        mime_to_ext = {v: k for k, v in SUPPORTED_DOCUMENT_TYPES.items()}
+                        ext = mime_to_ext.get(ct, "")
+
+                    if ext in SUPPORTED_DOCUMENT_TYPES:
+                        mime_type = SUPPORTED_DOCUMENT_TYPES[ext]
+                        document_urls.append(cached_path)
+                        document_media_types.append(mime_type)
+                        other_attachments.append(f"[Attachment: {display_name}]")
+
+                        if ext in (".md", ".txt") and os.path.isfile(cached_path):
+                            try:
+                                raw_bytes = Path(cached_path).read_bytes()
+                                if len(raw_bytes) <= 100 * 1024:
+                                    text_content = raw_bytes.decode("utf-8")
+                                    safe_name = re.sub(r"[^\w.\- ]", "_", display_name)
+                                    text_injections.append(f"[Content of {safe_name}]:\n{text_content}")
+                            except UnicodeDecodeError:
+                                logger.warning(
+                                    "[%s] Could not decode QQ text attachment as UTF-8: %s",
+                                    self._log_tag,
+                                    display_name,
+                                    exc_info=True,
+                                )
+                    else:
+                        other_attachments.append(f"[Attachment: {display_name}]")
                 except Exception as exc:
                     logger.debug("[%s] Failed to cache attachment: %s", self._log_tag, exc)
 
@@ -1607,7 +1647,10 @@ class QQAdapter(BasePlatformAdapter):
         return {
             "image_urls": image_urls,
             "image_media_types": image_media_types,
+            "document_urls": document_urls,
+            "document_media_types": document_media_types,
             "voice_transcripts": voice_transcripts,
+            "text_injections": text_injections,
             "attachment_info": attachment_info,
         }
 
