@@ -5788,6 +5788,30 @@ class AIAgent:
         if _env_hints:
             prompt_parts.append(_env_hints)
 
+        # Hermes Node Messaging — if the local API server + /message endpoint
+        # are enabled, tell the agent about the protocol so it can coordinate
+        # with other Hermes nodes instead of inventing an ad-hoc wire format.
+        try:
+            from hermes_cli.config import load_config as _load_cfg
+            _cfg = _load_cfg() or {}
+            _plat_cfg = (_cfg.get("platforms") or {}).get("api_server") or {}
+            _msg_cfg = (_plat_cfg.get("message_api") or {})
+            _msg_enabled = bool(_plat_cfg.get("enabled")) and bool(_msg_cfg.get("enabled", True))
+            if _msg_enabled:
+                _host = str(_plat_cfg.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+                _port = _plat_cfg.get("port") or 8642
+                _allow_cmd = bool(_msg_cfg.get("allow_command_execution", False))
+                prompt_parts.append(
+                    "Hermes Node Messaging:\n"
+                    f"- This Hermes instance exposes a node-messaging endpoint at POST http://{_host}:{_port}/message.\n"
+                    "- Use it to chat with or coordinate other Hermes instances.\n"
+                    "- Valid JSON fields are exactly: session_id, sender_id, sender_display_name, message, command, api_key, exec_token.\n"
+                    f"- message_api.allow_command_execution is {'true' if _allow_cmd else 'false'} on this instance. "
+                    "Do not assume remote command execution is available unless explicitly allowed by configuration."
+                )
+        except Exception:
+            pass
+
         platform_key = (self.platform or "").lower().strip()
         if platform_key in PLATFORM_HINTS:
             prompt_parts.append(PLATFORM_HINTS[platform_key])

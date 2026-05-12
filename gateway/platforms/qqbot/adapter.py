@@ -1537,6 +1537,10 @@ class QQAdapter(BasePlatformAdapter):
         voice_transcripts: List[str] = []
         text_injections: List[str] = []
         other_attachments: List[str] = []
+        text_doc_extensions = {
+            ".txt", ".md", ".csv", ".log", ".json", ".xml",
+            ".yaml", ".yml", ".toml", ".ini", ".cfg",
+        }
 
         for att in attachments:
             if not isinstance(att, dict):
@@ -1624,13 +1628,25 @@ class QQAdapter(BasePlatformAdapter):
                         document_media_types.append(mime_type)
                         other_attachments.append(f"[Attachment: {display_name}]")
 
-                        if ext in (".md", ".txt") and os.path.isfile(cached_path):
+                        if ext in text_doc_extensions and os.path.isfile(cached_path):
                             try:
                                 raw_bytes = Path(cached_path).read_bytes()
-                                if len(raw_bytes) <= 100 * 1024:
-                                    text_content = raw_bytes.decode("utf-8")
-                                    safe_name = re.sub(r"[^\w.\- ]", "_", display_name)
-                                    text_injections.append(f"[Content of {safe_name}]:\n{text_content}")
+                                max_inline_bytes = 100 * 1024
+                                chunk = raw_bytes[:max_inline_bytes]
+                                text_content = chunk.decode("utf-8")
+                                safe_name = re.sub(r"[^\w.\- ]", "_", display_name)
+                                from tools.credential_files import to_agent_visible_cache_path
+                                agent_path = to_agent_visible_cache_path(cached_path)
+                                if len(raw_bytes) <= max_inline_bytes:
+                                    text_injections.append(
+                                        f"[Content of {safe_name} (saved at {agent_path})]:\n{text_content}"
+                                    )
+                                else:
+                                    text_injections.append(
+                                        f"[Preview of {safe_name} (first {max_inline_bytes // 1024}KB only; "
+                                        f"full file saved at {agent_path}. Use read_file on that path to inspect the rest.)]:\n"
+                                        f"{text_content}"
+                                    )
                             except UnicodeDecodeError:
                                 logger.warning(
                                     "[%s] Could not decode QQ text attachment as UTF-8: %s",

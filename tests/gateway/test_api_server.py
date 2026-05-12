@@ -207,6 +207,9 @@ class TestAdapterInit:
         assert adapter._host == "127.0.0.1"
         assert adapter._port == 8642
         assert adapter._api_key == ""
+        assert adapter._allow_remote is False
+        assert adapter._message_api_enabled is True
+        assert adapter._message_api_allow_command_execution is False
         assert adapter.platform == Platform.API_SERVER
 
     def test_custom_config_from_extra(self):
@@ -2986,13 +2989,18 @@ class TestSessionKeyHeader:
 
 class TestMessageAPIEndpoint:
     @pytest.mark.asyncio
-    async def test_message_api_disabled_returns_404(self, auth_adapter):
+    async def test_message_api_enabled_by_default(self, auth_adapter):
         app = _create_app(auth_adapter)
         async with TestClient(TestServer(app)) as cli:
-            resp = await cli.post("/message", json={"message": "hi"})
-            assert resp.status == 404
-            data = await resp.json()
-            assert "disabled" in data["error"].lower()
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    {"final_response": "hi", "messages": [], "api_calls": 1},
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                resp = await cli.post("/message", json={"message": "hi"})
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["reply"] == "hi"
 
     @pytest.mark.asyncio
     async def test_message_request_returns_reply_and_session(self, auth_adapter):
@@ -3036,6 +3044,7 @@ class TestMessageAPIEndpoint:
             api_key="sk-secret",
             message_api={
                 "enabled": True,
+                "allow_command_execution": True,
                 "api_keys": ["node-key-1"],
                 "token_ttl_seconds": 3600,
             },
@@ -3067,7 +3076,7 @@ class TestMessageAPIEndpoint:
     async def test_message_command_accepts_bearer_auth_without_body_api_key(self, auth_adapter):
         auth_adapter = _make_adapter(
             api_key="sk-secret",
-            message_api={"enabled": True},
+            message_api={"enabled": True, "allow_command_execution": True},
         )
         app = _create_app(auth_adapter)
         async with TestClient(TestServer(app)) as cli:
@@ -3093,7 +3102,7 @@ class TestMessageAPIEndpoint:
     async def test_message_command_rejects_unauthorized_exec(self, auth_adapter):
         auth_adapter = _make_adapter(
             api_key="sk-secret",
-            message_api={"enabled": True, "api_keys": ["node-key-1"]},
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
         )
         app = _create_app(auth_adapter)
         async with TestClient(TestServer(app)) as cli:
@@ -3107,6 +3116,27 @@ class TestMessageAPIEndpoint:
                 assert data["command"]["requested"] is True
                 assert data["command"]["authorized"] is False
                 assert "requires" in data["command"]["error"]
+                mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_message_command_disabled_by_default(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"Authorization": "Bearer sk-secret"},
+                    json={"command": "pwd"},
+                )
+                assert resp.status == 403
+                data = await resp.json()
+                assert data["command"]["requested"] is True
+                assert data["command"]["executed"] is False
+                assert "disabled" in data["command"]["error"].lower()
                 mock_exec.assert_not_called()
 
 

@@ -100,6 +100,17 @@ class TestConnectBindGuard:
     """Verify that connect() refuses dangerous configurations."""
 
     @pytest.mark.asyncio
+    async def test_refuses_non_loopback_when_remote_not_allowed_even_with_key(self):
+        adapter = APIServerAdapter(
+            PlatformConfig(
+                enabled=True,
+                extra={"host": "0.0.0.0", "key": "sk-test", "allow_remote": False},
+            )
+        )
+        result = await adapter.connect()
+        assert result is False
+
+    @pytest.mark.asyncio
     async def test_refuses_ipv4_wildcard_without_key(self):
         adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": "0.0.0.0"}))
         result = await adapter.connect()
@@ -123,7 +134,7 @@ class TestConnectBindGuard:
     async def test_allows_wildcard_with_key(self):
         """Non-loopback with a key should pass the guard."""
         adapter = APIServerAdapter(
-            PlatformConfig(enabled=True, extra={"host": "0.0.0.0", "key": "sk-test"})
+            PlatformConfig(enabled=True, extra={"host": "0.0.0.0", "key": "sk-test", "allow_remote": True})
         )
         # The guard checks: is_network_accessible(host) AND NOT api_key
         # With a key set, the guard should not block.

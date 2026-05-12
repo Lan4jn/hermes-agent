@@ -566,6 +566,40 @@ class TestSubprocessCompatHelpers:
         assert flags & 0x08000000, "missing CREATE_NO_WINDOW"
 
 
+class TestLocalEnvironmentWindowsNoConsole:
+    def test_run_bash_sets_create_no_window(self, monkeypatch, tmp_path):
+        """Native Windows local commands should hide the spawned bash console."""
+        from tools.environments import local as local_mod
+        from tools.environments.local import LocalEnvironment
+
+        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
+        monkeypatch.setattr(local_mod, "_find_bash", lambda: r"C:\Git\bin\bash.exe")
+        monkeypatch.setattr(local_mod, "_make_run_env", lambda env: {"PATH": r"C:\Git\bin"})
+
+        captured = {}
+
+        class _FakeProc:
+            stdout = None
+            stdin = None
+            pid = 123
+
+        def fake_popen(args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return _FakeProc()
+
+        with patch.object(LocalEnvironment, "init_session", autospec=True, return_value=None):
+            env = LocalEnvironment(cwd=str(tmp_path), timeout=10, env={})
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+        env._run_bash("echo hi")
+
+        assert captured["args"] == [r"C:\Git\bin\bash.exe", "-c", "echo hi"]
+        assert "creationflags" in captured["kwargs"]
+        assert captured["kwargs"]["creationflags"] & 0x08000000, "missing CREATE_NO_WINDOW"
+
+
 # ---------------------------------------------------------------------------
 # tui_gateway/entry.py signal installation survives absent POSIX signals
 # ---------------------------------------------------------------------------

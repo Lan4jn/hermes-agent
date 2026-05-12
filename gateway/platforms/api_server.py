@@ -635,6 +635,7 @@ class APIServerAdapter(BasePlatformAdapter):
             raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
         self._port: int = _coerce_port(raw_port, DEFAULT_PORT)
         self._api_key: str = extra.get("key", os.getenv("API_SERVER_KEY", ""))
+        self._allow_remote: bool = bool(extra.get("allow_remote", False))
         self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")),
         )
@@ -662,9 +663,12 @@ class APIServerAdapter(BasePlatformAdapter):
         self._message_token_store = _MessageTokenStore()
         message_api_cfg = extra.get("message_api", {})
         self._message_api_cfg = message_api_cfg if isinstance(message_api_cfg, dict) else {}
-        self._message_api_enabled = bool(self._message_api_cfg.get("enabled", False))
+        self._message_api_enabled = bool(self._message_api_cfg.get("enabled", True))
         self._message_api_webui_history_enabled = bool(
             self._message_api_cfg.get("webui_history_enabled", False)
+        )
+        self._message_api_allow_command_execution = bool(
+            self._message_api_cfg.get("allow_command_execution", False)
         )
         self._message_api_keys = self._parse_message_api_keys(self._message_api_cfg.get("api_keys", []))
         self._message_api_token_ttl_seconds = self._parse_message_api_ttl(
@@ -1093,6 +1097,8 @@ class APIServerAdapter(BasePlatformAdapter):
             },
             "features": {
                 "message_api": self._message_api_enabled,
+                "message_api_remote_enabled": self._allow_remote,
+                "message_api_command_execution_enabled": self._message_api_allow_command_execution,
                 "chat_completions": True,
                 "chat_completions_streaming": True,
                 "responses_api": True,
@@ -1193,6 +1199,11 @@ class APIServerAdapter(BasePlatformAdapter):
             response_payload["session_id"] = result.get("session_id", session_id)
 
         if command:
+            if not self._message_api_allow_command_execution:
+                response_payload["command"]["error"] = (
+                    "command execution is disabled for /message on this Hermes instance"
+                )
+                return web.json_response(response_payload, status=403)
             response_payload["command"]["authorized"] = command_authorized
             if not command_authorized:
                 response_payload["command"]["error"] = (
@@ -3692,6 +3703,18 @@ class APIServerAdapter(BasePlatformAdapter):
                 pass
             if hasattr(sweep_task, "add_done_callback"):
                 sweep_task.add_done_callback(self._background_tasks.discard)
+
+            # Refuse to start on non-loopback unless the operator explicitly
+            # opted in. This keeps the default experience local-only even when
+            # config drift accidentally sets host=0.0.0.0.
+            if is_network_accessible(self._host) and not self._allow_remote:
+                logger.error(
+                    "[%s] Refusing to start: binding to %s requires "
+                    "platforms.api_server.allow_remote=true. "
+                    "Keep the default 127.0.0.1 for local-only access.",
+                    self.name, self._host,
+                )
+                return False
 
             # Refuse to start network-accessible without authentication
             if is_network_accessible(self._host) and not self._api_key:

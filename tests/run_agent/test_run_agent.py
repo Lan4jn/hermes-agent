@@ -994,6 +994,42 @@ class TestBuildSystemPrompt:
         prompt = agent._build_system_prompt()
         assert "NOUS SUBSCRIPTION BLOCK" in prompt
 
+    def test_includes_node_messaging_guidance_when_api_server_message_api_enabled(self, monkeypatch):
+        def fake_load_config():
+            return {
+                "agent": {},
+                "platforms": {
+                    "api_server": {
+                        "enabled": True,
+                        "host": "127.0.0.1",
+                        "port": 8642,
+                        "message_api": {
+                            "enabled": True,
+                            "allow_command_execution": False,
+                        },
+                    }
+                },
+            }
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("terminal")),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+            patch("hermes_cli.config.load_config", side_effect=fake_load_config),
+        ):
+            agent = AIAgent(
+                api_key="test-k...7890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+            prompt = agent._build_system_prompt()
+
+        assert "/message" in prompt
+        assert "Hermes Node Messaging" in prompt
+        assert "allow_command_execution" in prompt
+
     def test_skills_prompt_derives_available_toolsets_from_loaded_tools(self):
         tools = _make_tool_defs("web_search", "skills_list", "skill_view", "skill_manage")
         toolset_map = {

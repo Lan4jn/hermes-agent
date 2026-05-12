@@ -1536,6 +1536,34 @@ class TestQQDocumentIngestion:
         assert result["attachment_info"] == "[Attachment: notes.txt]"
         assert result["text_injections"]
         assert "hello from qq" in result["text_injections"][0]
+        assert str(doc_path) in result["text_injections"][0]
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_large_text_document_injects_preview_and_path(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "big.txt"
+        content = ("hello from qq\n" * 12000).encode("utf-8")
+        doc_path.write_bytes(content)
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "text/plain",
+                "url": "https://qq-cdn/big.txt",
+                "filename": "big.txt",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["text_injections"]
+        preview = result["text_injections"][0]
+        assert "big.txt" in preview
+        assert str(doc_path) in preview
+        assert "read_file" in preview
+        assert "hello from qq" in preview
 
     @pytest.mark.asyncio
     async def test_process_attachments_empty_content_type_jpg_still_treated_as_image(self, tmp_path):
