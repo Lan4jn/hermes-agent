@@ -16,6 +16,7 @@ from gateway.platforms.base import (
     cache_document_from_bytes,
     cleanup_document_cache,
     get_document_cache_dir,
+    is_text_inject_document,
 )
 
 # ---------------------------------------------------------------------------
@@ -151,7 +152,22 @@ class TestSupportedDocumentTypes:
 
     @pytest.mark.parametrize(
         "ext",
-        [".pdf", ".md", ".txt", ".zip", ".docx", ".xlsx", ".pptx"],
+        [".pdf", ".md", ".txt", ".zip", ".docx", ".xlsx", ".pptx", ".conf", ".properties", ".sql", ".jsonl", ".tsv"],
     )
     def test_expected_extensions_present(self, ext):
         assert ext in SUPPORTED_DOCUMENT_TYPES
+
+    @pytest.mark.parametrize(
+        "filename, media_type",
+        [
+            ("app.properties", "text/plain"),
+            ("schema.sql", "text/plain"),
+            ("config.conf", "text/plain"),
+            ("data.jsonl", "application/json"),
+            ("table.tsv", "text/tab-separated-values"),
+            (".env", "text/plain"),
+            ("Dockerfile", "text/plain"),
+        ],
+    )
+    def test_text_inject_helper_recognizes_common_text_docs(self, filename, media_type):
+        assert is_text_inject_document(filename, media_type) is True

@@ -186,6 +186,7 @@ from gateway.platforms.base import (
     MessageType,
     SendResult,
     SUPPORTED_DOCUMENT_TYPES,
+    is_text_inject_document,
     cache_image_from_url,
     cache_audio_from_url,
 )
@@ -1183,7 +1184,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             if msg_type == MessageType.DOCUMENT and cached_urls:
                 for doc_path in cached_urls:
                     ext = Path(doc_path).suffix.lower()
-                    if ext in (".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".py", ".js", ".ts", ".html", ".css"):
+                    if is_text_inject_document(doc_path, mime):
                         try:
                             file_size = Path(doc_path).stat().st_size
                             if file_size > MAX_TEXT_INJECT_BYTES:

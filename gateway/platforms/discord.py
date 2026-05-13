@@ -64,6 +64,7 @@ from gateway.platforms.base import (
     cache_audio_from_bytes,
     cache_document_from_bytes,
     SUPPORTED_DOCUMENT_TYPES,
+    is_text_inject_document,
 )
 from tools.url_safety import is_safe_url
 
@@ -4339,7 +4340,7 @@ class DiscordAdapter(BasePlatformAdapter):
                             logger.info("[Discord] Cached user document: %s", cached_path)
                             # Inject text content for plain-text documents (capped at 100 KB)
                             MAX_TEXT_INJECT_BYTES = 100 * 1024
-                            if ext in (".md", ".txt", ".log") and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
+                            if is_text_inject_document(att.filename or f"document{ext}", doc_mime) and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
                                 try:
                                     text_content = raw_bytes.decode("utf-8")
                                     display_name = att.filename or f"document{ext}"

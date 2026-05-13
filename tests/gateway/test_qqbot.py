@@ -1566,6 +1566,30 @@ class TestQQDocumentIngestion:
         assert "hello from qq" in preview
 
     @pytest.mark.asyncio
+    async def test_process_attachments_conf_file_with_generic_content_type_is_text_document(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "sockd.conf"
+        doc_path.write_text("listen = 0.0.0.0:7890", encoding="utf-8")
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "file",
+                "url": "https://qq-cdn/sockd.conf",
+                "filename": "sockd.conf",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["document_media_types"] == ["text/plain"]
+        assert result["text_injections"]
+        assert "sockd.conf" in result["text_injections"][0]
+        assert "listen = 0.0.0.0:7890" in result["text_injections"][0]
+
+    @pytest.mark.asyncio
     async def test_process_attachments_empty_content_type_jpg_still_treated_as_image(self, tmp_path):
         adapter = self._make_adapter()
         img_path = tmp_path / "photo.jpg"

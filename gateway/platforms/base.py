@@ -817,19 +817,78 @@ SUPPORTED_DOCUMENT_TYPES = {
     ".md": "text/markdown",
     ".txt": "text/plain",
     ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
     ".log": "text/plain",
     ".json": "application/json",
+    ".jsonl": "application/json",
     ".xml": "application/xml",
     ".yaml": "application/yaml",
     ".yml": "application/yaml",
     ".toml": "application/toml",
     ".ini": "text/plain",
     ".cfg": "text/plain",
+    ".conf": "text/plain",
+    ".config": "text/plain",
+    ".properties": "text/plain",
+    ".sql": "text/plain",
+    ".sh": "text/plain",
+    ".bash": "text/plain",
+    ".zsh": "text/plain",
+    ".ps1": "text/plain",
+    ".bat": "text/plain",
+    ".cmd": "text/plain",
+    ".py": "text/plain",
+    ".js": "text/plain",
+    ".ts": "text/plain",
+    ".html": "text/html",
+    ".css": "text/css",
     ".zip": "application/zip",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
+
+TEXT_INJECT_DOCUMENT_EXTENSIONS = {
+    ".md", ".txt", ".csv", ".tsv", ".log", ".json", ".jsonl", ".xml",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".config",
+    ".properties", ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat",
+    ".cmd", ".py", ".js", ".ts", ".html", ".css",
+}
+
+TEXT_INJECT_DOCUMENT_FILENAMES = {
+    ".env",
+    ".gitignore",
+    "dockerfile",
+    "compose.yml",
+    "compose.yaml",
+}
+
+TEXT_INJECT_DOCUMENT_MIME_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "text/tab-separated-values",
+    "text/html",
+    "text/css",
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/toml",
+}
+
+
+def is_text_inject_document(filename: str, media_type: str = "") -> bool:
+    """Return True when a document should have text content injected."""
+    display_name = Path(filename or "").name.lower()
+    ext = Path(display_name).suffix.lower()
+    if ext in TEXT_INJECT_DOCUMENT_EXTENSIONS:
+        return True
+    if display_name in TEXT_INJECT_DOCUMENT_FILENAMES:
+        return True
+    normalized = str(media_type or "").strip().lower()
+    if normalized in TEXT_INJECT_DOCUMENT_MIME_TYPES:
+        return True
+    return normalized.startswith("text/")
 
 
 def get_document_cache_dir() -> Path:

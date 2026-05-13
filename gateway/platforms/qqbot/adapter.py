@@ -68,6 +68,7 @@ from gateway.platforms.base import (
     MessageType,
     SendResult,
     SUPPORTED_DOCUMENT_TYPES,
+    is_text_inject_document,
     _ssrf_redirect_guard,
     cache_document_from_bytes,
     cache_image_from_bytes,
@@ -1537,11 +1538,6 @@ class QQAdapter(BasePlatformAdapter):
         voice_transcripts: List[str] = []
         text_injections: List[str] = []
         other_attachments: List[str] = []
-        text_doc_extensions = {
-            ".txt", ".md", ".csv", ".log", ".json", ".xml",
-            ".yaml", ".yml", ".toml", ".ini", ".cfg",
-        }
-
         for att in attachments:
             if not isinstance(att, dict):
                 continue
@@ -1628,7 +1624,7 @@ class QQAdapter(BasePlatformAdapter):
                         document_media_types.append(mime_type)
                         other_attachments.append(f"[Attachment: {display_name}]")
 
-                        if ext in text_doc_extensions and os.path.isfile(cached_path):
+                        if is_text_inject_document(display_name, mime_type) and os.path.isfile(cached_path):
                             try:
                                 raw_bytes = Path(cached_path).read_bytes()
                                 max_inline_bytes = 100 * 1024

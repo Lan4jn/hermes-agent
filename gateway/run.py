@@ -6796,13 +6796,13 @@ class GatewayRunner:
         if event.media_urls and event.message_type == MessageType.DOCUMENT:
             import mimetypes as _mimetypes
             from tools.credential_files import to_agent_visible_cache_path
+            from gateway.platforms.base import is_text_inject_document
 
-            _TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".log", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
             for i, path in enumerate(event.media_urls):
                 mtype = event.media_types[i] if i < len(event.media_types) else ""
                 if mtype in ("", "application/octet-stream"):
                     _ext = os.path.splitext(path)[1].lower()
-                    if _ext in _TEXT_EXTENSIONS:
+                    if is_text_inject_document(path, mtype):
                         mtype = "text/plain"
                     else:
                         guessed, _ = _mimetypes.guess_type(path)
