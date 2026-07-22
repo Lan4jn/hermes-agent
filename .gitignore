@@ -96,6 +96,7 @@ models-dev-upstream/
 .cursor/
 .gemini/
 .zed/
+.superpowers/
 .mcp.json
 opencode.json
 config/mcporter.json
