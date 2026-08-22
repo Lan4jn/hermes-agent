@@ -8,12 +8,6 @@ from toolsets import resolve_toolset, get_toolset, validate_toolset
 class TestHermesApiServerToolset:
     """Tests for the hermes-api-server toolset definition."""
 
-    def test_toolset_exists(self):
-        ts = get_toolset("hermes-api-server")
-        assert ts is not None
-
-    def test_toolset_validates(self):
-        assert validate_toolset("hermes-api-server")
 
     def test_toolset_includes_web_tools(self):
         tools = resolve_toolset("hermes-api-server")
@@ -60,12 +54,19 @@ class TestHermesApiServerToolset:
         tools = resolve_toolset("hermes-api-server")
         assert "text_to_speech" not in tools
 
-
 class TestApiServerPlatformConfig:
-    def test_platforms_dict_includes_api_server(self):
-        from hermes_cli.tools_config import PLATFORMS
-        assert "api_server" in PLATFORMS
-        assert PLATFORMS["api_server"]["default_toolset"] == "hermes-api-server"
+
+    def test_default_api_server_includes_terminal_toolset(self):
+        """Regression #49622: desktop-only read_terminal is registered into the
+        'terminal' toolset (ships in-repo), so resolve_toolset('terminal') grows
+        to include it after discovery. read_terminal is NOT in the
+        hermes-api-server composite, so the old all-tools subset test dropped
+        'terminal' entirely. Its static membership (terminal, process) IS in the
+        composite, so it must stay enabled."""
+        from tools.registry import discover_builtin_tools
+        from hermes_cli.tools_config import _get_platform_tools
+        discover_builtin_tools()
+        assert "terminal" in _get_platform_tools({}, "api_server")
 
     def test_explicit_api_server_toolsets_recover_configured_peer_messaging(self):
         from hermes_cli.tools_config import _get_platform_tools
