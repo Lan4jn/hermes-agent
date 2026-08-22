@@ -851,7 +851,19 @@ def _gemini_http_error(
         if isinstance(value, list):
             return [_redact_json(item) for item in value]
         if isinstance(value, dict):
-            return {key: _redact_json(item) for key, item in value.items()}
+            redacted: Dict[Any, Any] = {}
+            reserved_keys = set(value)
+            redacted_key_index = 0
+            for key, item in value.items():
+                safe_key = key
+                if isinstance(key, str) and _redact(key) != key:
+                    while True:
+                        safe_key = f"[REDACTED_KEY_{redacted_key_index}]"
+                        redacted_key_index += 1
+                        if safe_key not in reserved_keys and safe_key not in redacted:
+                            break
+                redacted[safe_key] = _redact_json(item)
+            return redacted
         return value
 
     # Parse the body once, surviving any weird encodings.
@@ -861,14 +873,20 @@ def _gemini_http_error(
         body_text = response.text
     except Exception:
         body_text = ""
-    body_text = _redact(body_text)
     if body_text:
         try:
             parsed = json.loads(body_text)
+            safe_parsed = _redact_json(parsed)
+            body_text = json.dumps(safe_parsed, ensure_ascii=False)
             if isinstance(parsed, dict):
-                body_json = _redact_json(parsed)
+                body_json = safe_parsed
         except (ValueError, TypeError):
             body_json = {}
+            body_text = (
+                "Code Assist request failed"
+                if custom_endpoint
+                else _redact(body_text)
+            )
 
     # Dig into Google's error envelope.  Shape is:
     #   {"error": {"code": 429, "message": "...", "status": "RESOURCE_EXHAUSTED",

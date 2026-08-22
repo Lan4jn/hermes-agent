@@ -2756,6 +2756,75 @@ class TestGeminiCloudCodeClient:
         finally:
             client.close()
 
+    def test_sensitive_json_keys_are_redacted_without_collision_data_loss(
+        self, monkeypatch, caplog,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        private_base = "https://proxy.example.test/private/%2522customer"
+        sensitive_keys = (
+            private_base,
+            "https://proxy.example.test/private/%22customer",
+            "https://proxy.example.test/private/\"customer",
+            "/private/%22customer",
+            "json-key-secret-token",
+        )
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token",
+            lambda **_: sensitive_keys[-1],
+        )
+        metadata = {
+            sensitive_keys[0]: "raw-value",
+            sensitive_keys[1]: "decoded-once-value",
+            sensitive_keys[2]: "decoded-stable-value",
+            sensitive_keys[3]: [{sensitive_keys[4]: "nested-list-value"}],
+            sensitive_keys[4]: "token-key-value",
+        }
+
+        def handler(request):
+            return httpx.Response(429, json={"error": {
+                "message": "rate limit",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "RATE_LIMIT",
+                    "metadata": metadata,
+                }],
+            }})
+
+        client = GeminiCloudCodeClient(base_url=private_base, project_id="project-1")
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert classified.reason == FailoverReason.rate_limit
+            safe_metadata = error.details["metadata"]
+            assert len(safe_metadata) == len(metadata)
+            assert len(set(safe_metadata)) == len(metadata)
+            assert {
+                value for value in safe_metadata.values()
+                if isinstance(value, str)
+            } >= {
+                "raw-value", "decoded-once-value", "decoded-stable-value",
+                "token-key-value",
+            }
+            rendered = "\n".join((
+                str(error), repr(error.details),
+                json.dumps(error.response.json(), sort_keys=True),
+                repr(classified), classified.message, caplog.text,
+            ))
+            for sensitive in sensitive_keys:
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
     def test_custom_404_names_configured_endpoint(self, monkeypatch):
         from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
         from agent.google_code_assist import CodeAssistError
