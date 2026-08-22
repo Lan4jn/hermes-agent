@@ -552,7 +552,7 @@ class TestOAuthEndpointRouting:
                 endpoint_url, {"client_secret": "client-secret"}, 0.01
             )
 
-        assert caught.value.code == "google_oauth_token_request_failed"
+        assert caught.value.code == "google_oauth_token_network_error"
         assert str(caught.value) == "Google OAuth token request failed."
         assert caught.value.__cause__ is None
         for unsafe in (unsafe_detail, endpoint_url, "access-secret", "refresh-secret"):

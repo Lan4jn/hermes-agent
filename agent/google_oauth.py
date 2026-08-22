@@ -576,7 +576,7 @@ def _post_form(url: str, data: Dict[str, str], timeout: float) -> Dict[str, Any]
     except Exception:
         raise GoogleOAuthError(
             "Google OAuth token request failed.",
-            code="google_oauth_token_request_failed",
+            code="google_oauth_token_network_error",
         ) from None
 
     try:
