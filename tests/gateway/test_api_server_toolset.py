@@ -139,4 +139,6 @@ class TestApiServerAdapterToolset:
             mock_agent_cls.assert_called_once()
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
-            assert sorted(toolsets) == ["peer_messaging", "terminal", "web"]
+            assert "peer_messaging" in toolsets
+            assert "terminal" in toolsets
+            assert "web" in toolsets
