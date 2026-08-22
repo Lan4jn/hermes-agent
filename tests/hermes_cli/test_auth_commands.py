@@ -469,6 +469,42 @@ def test_auth_add_xai_oauth_keeps_distinct_pool_accounts(tmp_path, monkeypatch):
     assert payload["active_provider"] == "xai-oauth"
 
 
+def test_auth_add_google_gemini_cli_sets_active_provider(tmp_path, monkeypatch):
+    """hermes auth add google-gemini-cli must set active_provider in auth.json."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}})
+    monkeypatch.setattr(
+        "agent.google_oauth.run_gemini_oauth_login_pure",
+        lambda: {
+            "access_token": "ya29.test-token",
+            "refresh_token": "google-refresh",
+            "email": "user@example.com",
+            "expires_ms": 9999999999000,
+            "project_id": "my-project",
+        },
+    )
+
+    from hermes_cli.auth_commands import auth_add_command
+
+    class _Args:
+        provider = "google-gemini-cli"
+        auth_type = "oauth"
+        api_key = None
+        label = None
+
+    auth_add_command(_Args())
+
+    payload = json.loads((tmp_path / "hermes" / "auth.json").read_text())
+    assert payload["active_provider"] == "google-gemini-cli"
+    state = payload["providers"]["google-gemini-cli"]
+    assert state.get("email") == "user@example.com"
+    assert "access_token" not in state
+    assert "refresh_token" not in state
+    entries = payload["credential_pool"]["google-gemini-cli"]
+    entry = next(item for item in entries if item["source"] == "manual:google_oauth")
+    assert entry["access_token"] == "ya29.test-token"
+
+
 def test_auth_remove_reindexes_priorities(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     # Prevent pool auto-seeding from host env vars and file-backed sources
