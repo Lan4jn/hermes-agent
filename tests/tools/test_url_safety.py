@@ -146,14 +146,21 @@ class TestProxyEnvironmentDnsDelegation:
             assert is_safe_url("https://example.com/file.jpg") is False
 
     @pytest.mark.parametrize("url, expected", [
-        # the allowlisted host itself, over https
+        # QQ's fixed control-plane and media hosts must work behind proxy
+        # fake-IP DNS, where public names intentionally resolve to 198.18/15.
+        ("https://bots.qq.com/app/getAppAccessToken", True),
+        ("https://api.sgroup.qq.com/gateway", True),
         ("https://multimedia.nt.qq.com.cn/download?id=123", True),
-        # exception is an exact host match — subdomains stay blocked
+        # Exceptions are exact host matches — lookalike subdomains stay blocked.
+        ("https://sub.bots.qq.com/app/getAppAccessToken", False),
+        ("https://api.sgroup.qq.com.evil.example/gateway", False),
         ("https://sub.multimedia.nt.qq.com.cn/download?id=123", False),
-        # ... and requires https
+        # The exception requires transport encryption.
+        ("http://bots.qq.com/app/getAppAccessToken", False),
+        ("http://api.sgroup.qq.com/gateway", False),
         ("http://multimedia.nt.qq.com.cn/download?id=123", False),
     ])
-    def test_qq_multimedia_hostname_exception(self, url, expected):
+    def test_qq_official_hostname_exceptions(self, url, expected):
         with _resolves_to("198.18.0.23"):
             assert is_safe_url(url) is expected
 
@@ -172,6 +179,17 @@ class TestAsyncIsSafeUrl:
 
 
 class TestSSRFGuardedHttpxClient:
+    @pytest.mark.parametrize("hostname", [
+        "bots.qq.com",
+        "api.sgroup.qq.com",
+        "multimedia.nt.qq.com.cn",
+    ])
+    def test_qq_official_hosts_allow_fake_ip_at_connect_time(self, hostname):
+        with _resolves_to("198.18.0.23"):
+            assert _resolved_http_connect_ips(hostname, 443, "https") == [
+                "198.18.0.23"
+            ]
+
     def test_connect_resolution_checks_private_ip_beyond_candidate_cap(self):
         answers = [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", (f"93.184.216.{idx}", 80))
