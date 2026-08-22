@@ -24,6 +24,155 @@ def _jwt_with_claims(claims: dict) -> str:
     return f"{_part({'alg': 'none', 'typ': 'JWT'})}.{_part(claims)}.sig"
 
 
+def _pooled_credential(**overrides):
+    from agent.credential_pool import PooledCredential
+
+    values = {
+        "provider": "google-gemini-cli",
+        "id": "cred-first",
+        "label": "first@example.com",
+        "auth_type": "oauth",
+        "priority": 3,
+        "source": "manual:google_oauth",
+        "access_token": "access-old",
+        "refresh_token": "refresh-old",
+        "expires_at_ms": 1000,
+        "base_url": "https://old.example.test",
+    }
+    values.update(overrides)
+    return PooledCredential(**values)
+
+
+def test_upsert_entry_replaces_source_preserving_identity_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import CredentialPool, STATUS_EXHAUSTED
+
+    first = _pooled_credential(
+        last_status=STATUS_EXHAUSTED,
+        last_status_at=10.0,
+        last_error_code=429,
+        last_error_reason="rate_limit",
+        last_error_message="old failure",
+        last_error_reset_at=9999.0,
+    )
+    duplicate = _pooled_credential(
+        id="cred-duplicate", label="duplicate@example.com", priority=8,
+    )
+    other = _pooled_credential(
+        id="cred-other",
+        label="other",
+        priority=1,
+        source="manual:other",
+        access_token="other-token",
+    )
+    pool = CredentialPool("google-gemini-cli", [other, first, duplicate])
+
+    result = pool.upsert_entry(_pooled_credential(
+        id="cred-new",
+        label="new@example.com",
+        priority=99,
+        access_token="access-new",
+        refresh_token="refresh-new",
+        expires_at_ms=2000,
+        base_url="https://new.example.test",
+    ))
+
+    matching = [entry for entry in pool.entries() if entry.source == "manual:google_oauth"]
+    assert matching == [result]
+    assert result.id == "cred-first"
+    assert result.priority == 3
+    assert result.label == "first@example.com"
+    assert result.access_token == "access-new"
+    assert result.refresh_token == "refresh-new"
+    assert result.expires_at_ms == 2000
+    assert result.base_url == "https://new.example.test"
+    assert result.last_status is None
+    assert result.last_status_at is None
+    assert result.last_error_code is None
+    assert result.last_error_reason is None
+    assert result.last_error_message is None
+    assert result.last_error_reset_at is None
+    assert [entry.id for entry in pool.entries() if entry.source == "manual:other"] == [
+        "cred-other"
+    ]
+
+    payload = json.loads((tmp_path / "hermes" / "auth.json").read_text())
+    persisted = payload["credential_pool"]["google-gemini-cli"]
+    assert [entry["id"] for entry in persisted] == ["cred-other", "cred-first"]
+    assert persisted[1]["access_token"] == "access-new"
+
+
+def test_upsert_entry_persists_only_when_changed(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import CredentialPool
+
+    entry = _pooled_credential()
+    pool = CredentialPool("google-gemini-cli", [entry])
+    persisted = []
+    monkeypatch.setattr(pool, "_persist", lambda: persisted.append(True))
+
+    assert pool.upsert_entry(entry) == entry
+    assert persisted == []
+
+    changed = _pooled_credential(access_token="access-new")
+    assert pool.upsert_entry(changed).access_token == "access-new"
+    assert persisted == [True]
+
+
+def test_upsert_entry_token_change_clears_orphaned_error_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import CredentialPool
+
+    entry = _pooled_credential(
+        last_error_code=401,
+        last_error_reason="invalid_token",
+        last_error_message="expired credential",
+        last_error_reset_at=9999.0,
+    )
+    pool = CredentialPool("google-gemini-cli", [entry])
+
+    result = pool.upsert_entry(_pooled_credential(access_token="access-new"))
+
+    assert result.last_error_code is None
+    assert result.last_error_reason is None
+    assert result.last_error_message is None
+    assert result.last_error_reset_at is None
+
+
+def test_upsert_entry_adds_different_source_without_replacing(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import CredentialPool
+
+    pool = CredentialPool("google-gemini-cli", [_pooled_credential()])
+    other = _pooled_credential(
+        id="cred-other",
+        label="other",
+        priority=7,
+        source="manual:other",
+        access_token="other-token",
+    )
+
+    assert pool.upsert_entry(other) == other
+    assert [(entry.source, entry.id, entry.priority) for entry in pool.entries()] == [
+        ("manual:google_oauth", "cred-first", 3),
+        ("manual:other", "cred-other", 7),
+    ]
+
+
+def test_add_entry_keeps_same_source_multi_account_semantics(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import CredentialPool
+
+    pool = CredentialPool("google-gemini-cli", [])
+    first = pool.add_entry(_pooled_credential(priority=40))
+    second = pool.add_entry(_pooled_credential(
+        id="cred-second", label="second@example.com", priority=40,
+    ))
+
+    assert [entry.id for entry in pool.entries()] == ["cred-first", "cred-second"]
+    assert [first.priority, second.priority] == [0, 1]
+
+
 
 
 

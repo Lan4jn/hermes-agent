@@ -2404,6 +2404,23 @@ class CredentialPool:
             self._persist()
             return entry
 
+    def upsert_entry(self, entry: PooledCredential) -> PooledCredential:
+        """Replace the credential for one singleton source, or append it."""
+        with self._lock:
+            changed = _upsert_entry(
+                self._entries,
+                self.provider,
+                entry.source,
+                entry.to_dict(),
+            )
+            matching = next(
+                candidate for candidate in self._entries
+                if candidate.source == entry.source
+            )
+            if changed:
+                self._persist()
+            return matching
+
 
 def _upsert_entry(entries: List[PooledCredential], provider: str, source: str, payload: Dict[str, Any]) -> bool:
     matching_indices = []
@@ -2445,7 +2462,17 @@ def _upsert_entry(entries: List[PooledCredential], provider: str, source: str, p
                 extra_updates[key] = value
     # When the credential token itself changes (key rotation), clear any
     # exhaustion/error state — the old status is stale for the new key.
-    if token_changed and existing.last_status is not None:
+    status_fields = (
+        "last_status",
+        "last_status_at",
+        "last_error_code",
+        "last_error_reason",
+        "last_error_message",
+        "last_error_reset_at",
+    )
+    if token_changed and any(
+        getattr(existing, field_name) is not None for field_name in status_fields
+    ):
         field_updates["last_status"] = None
         field_updates["last_status_at"] = None
         field_updates["last_error_code"] = None

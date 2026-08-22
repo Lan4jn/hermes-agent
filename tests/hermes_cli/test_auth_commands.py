@@ -508,6 +508,54 @@ def test_auth_add_google_gemini_cli_sets_active_provider(tmp_path, monkeypatch):
     assert entry["expires_at_ms"] == 9999999999000
 
 
+def test_auth_add_google_gemini_cli_relogin_replaces_pooled_singleton(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}})
+    credentials = iter([
+        {
+            "access_token": "access-old",
+            "refresh_token": "refresh-old",
+            "email": "first@example.com",
+            "expires_at_ms": 1000,
+        },
+        {
+            "access_token": "access-new",
+            "refresh_token": "refresh-new",
+            "email": "second@example.com",
+            "expires_at_ms": 2000,
+        },
+    ])
+    monkeypatch.setattr(
+        "agent.google_oauth.run_gemini_oauth_login_pure", lambda: next(credentials),
+    )
+    from agent.credential_pool import load_pool
+    from hermes_cli.auth_commands import auth_add_command
+
+    args = SimpleNamespace(
+        provider="google-gemini-cli", auth_type="oauth", api_key=None, label=None,
+    )
+    auth_add_command(args)
+    first = load_pool("google-gemini-cli").entries()[0]
+    auth_add_command(args)
+
+    pool = load_pool("google-gemini-cli")
+    entries = [entry for entry in pool.entries() if entry.source == "manual:google_oauth"]
+    assert len(entries) == 1
+    assert entries[0].id == first.id
+    assert entries[0].priority == first.priority
+    assert entries[0].label == "first@example.com"
+    assert entries[0].access_token == "access-new"
+    assert entries[0].refresh_token == "refresh-new"
+    assert entries[0].expires_at_ms == 2000
+    assert pool.select().access_token == "access-new"
+    assert pool.current().access_token == "access-new"
+    output = capsys.readouterr().out
+    assert "Saved google-gemini-cli OAuth credential" in output
+    assert "Added google-gemini-cli OAuth credential #" not in output
+
+
 def test_auth_remove_reindexes_priorities(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     # Prevent pool auto-seeding from host env vars and file-backed sources

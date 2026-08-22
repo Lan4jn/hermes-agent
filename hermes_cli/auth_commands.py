@@ -452,9 +452,9 @@ def auth_add_command(args) -> None:
             expires_at_ms=creds.get("expires_at_ms"),
             base_url=creds.get("base_url") or code_assist_base_url,
         )
-        pool.add_entry(entry)
+        entry = pool.upsert_entry(entry)
         auth_mod.mark_provider_active_if_unset(provider)
-        print(f'Added {provider} OAuth credential #{len(pool.entries())}: "{entry.label}"')
+        print(f'Saved {provider} OAuth credential: "{entry.label}"')
         return
 
     raise SystemExit(f"`hermes auth add {provider}` is not implemented for auth type {requested_type} yet.")
