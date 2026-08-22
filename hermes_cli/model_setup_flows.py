@@ -892,6 +892,63 @@ def _model_flow_minimax_oauth(config, current_model="", args=None):
     print(f"\u2713 Using MiniMax model: {selected}")
 
 
+def _model_flow_google_gemini_cli(_config, current_model=""):
+    """Google Gemini OAuth (PKCE) via Cloud Code Assist — supports free AND paid tiers."""
+    from hermes_cli.auth import (
+        DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
+        get_gemini_oauth_auth_status,
+        resolve_gemini_oauth_runtime_credentials,
+        _prompt_model_selection,
+        _save_model_choice,
+        _update_config_for_provider,
+    )
+    from hermes_cli.models import _PROVIDER_MODELS
+
+    status = get_gemini_oauth_auth_status()
+    if not status.get("logged_in"):
+        try:
+            from agent.google_oauth import resolve_project_id_from_env, start_oauth_flow
+
+            env_project = resolve_project_id_from_env()
+            start_oauth_flow(force_relogin=True, project_id=env_project)
+        except Exception as exc:
+            print(f"OAuth login failed: {exc}")
+            return
+
+    # Verify creds resolve + trigger project discovery
+    try:
+        creds = resolve_gemini_oauth_runtime_credentials(force_refresh=False)
+        project_id = creds.get("project_id", "")
+        if project_id:
+            print(f"  Using GCP project: {project_id}")
+        else:
+            print(
+                "  No GCP project configured — free tier will be auto-provisioned on first request."
+            )
+    except Exception as exc:
+        print(f"Failed to resolve Gemini credentials: {exc}")
+        return
+
+    models = list(_PROVIDER_MODELS.get("google-gemini-cli") or [])
+    default = current_model or (models[0] if models else "gemini-3-flash-preview")
+    selected = _prompt_model_selection(
+        models,
+        current_model=default,
+        confirm_provider="google-gemini-cli",
+        confirm_base_url=DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
+    )
+    if selected:
+        _save_model_choice(selected)
+        _update_config_for_provider(
+            "google-gemini-cli", DEFAULT_GEMINI_CLOUDCODE_BASE_URL
+        )
+        print(
+            f"Default model set to: {selected} (via Google Gemini OAuth / Code Assist)"
+        )
+    else:
+        print("No change.")
+
+
 def _model_flow_custom(config):
     """Custom endpoint: collect URL, API key, and model name.
 

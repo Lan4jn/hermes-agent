@@ -45,7 +45,7 @@ class TestSaveModelChoiceAlwaysDict:
         _save_model_choice("kimi-k2.5")
 
         import yaml
-        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        config = yaml.safe_load((config_home / "config.yaml").read_text(encoding="utf-8")) or {}
         model = config.get("model")
         assert isinstance(model, dict), (
             f"Expected model to be a dict after save, got {type(model)}: {model}"
@@ -103,13 +103,45 @@ class TestProviderPersistsAfterModelSave:
             _model_flow_api_key_provider(load_config(), "kimi-coding", "old-model")
 
         import yaml
-        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        config = yaml.safe_load((config_home / "config.yaml").read_text(encoding="utf-8")) or {}
         model = config.get("model")
         assert isinstance(model, dict), f"model should be dict, got {type(model)}"
         assert model.get("provider") == "kimi-coding", (
             f"provider should be 'kimi-coding', got {model.get('provider')}"
         )
         assert model.get("default") == "kimi-k2.5"
+
+    def test_google_gemini_cli_provider_saved_when_selected(self, config_home):
+        """_model_flow_google_gemini_cli should persist provider/base_url/model together."""
+        from hermes_cli.main import _model_flow_google_gemini_cli
+        from hermes_cli.config import load_config
+
+        with patch(
+            "hermes_cli.auth.get_gemini_oauth_auth_status",
+            return_value={"logged_in": True, "email": "user@example.com"},
+        ), patch(
+            "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+            return_value={
+                "provider": "google-gemini-cli",
+                "api_key": "ya29.test",
+                "base_url": "cloudcode-pa://google",
+                "project_id": "proj-123",
+            },
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection",
+            return_value="gemini-3.1-pro-preview",
+        ):
+            _model_flow_google_gemini_cli(load_config(), "old-model")
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model")
+        assert isinstance(model, dict), f"model should be dict, got {type(model)}"
+        assert model.get("provider") == "google-gemini-cli"
+        assert model.get("base_url") == "cloudcode-pa://google"
+        assert model.get("default") == "gemini-3.1-pro-preview"
+        assert "api_mode" not in model
 
 
 
