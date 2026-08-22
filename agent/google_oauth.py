@@ -558,24 +558,27 @@ def _post_form(url: str, data: Dict[str, str], timeout: float) -> Dict[str, Any]
             raw = response.read().decode("utf-8", errors="replace")
             return json.loads(raw)
     except urllib.error.HTTPError as exc:
-        detail = ""
+        oauth_error = ""
         try:
-            detail = exc.read().decode("utf-8", errors="replace")
+            payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+            if isinstance(payload, dict):
+                oauth_error = str(payload.get("error", "") or "")
         except Exception:
             pass
-        # Detect invalid_grant to signal credential revocation
-        code = "google_oauth_token_http_error"
-        if "invalid_grant" in detail.lower():
-            code = "google_oauth_invalid_grant"
+        code = (
+            "google_oauth_invalid_grant"
+            if oauth_error == "invalid_grant"
+            else "google_oauth_token_http_error"
+        )
         raise GoogleOAuthError(
-            f"Google OAuth token endpoint returned HTTP {exc.code}: {detail or exc.reason}",
+            f"Google OAuth token endpoint returned HTTP {exc.code}.",
             code=code,
-        ) from exc
-    except urllib.error.URLError as exc:
+        ) from None
+    except urllib.error.URLError:
         raise GoogleOAuthError(
-            f"Google OAuth token request failed: {exc}",
+            "Google OAuth token request failed.",
             code="google_oauth_token_network_error",
-        ) from exc
+        ) from None
 
 
 def exchange_code(
@@ -865,14 +868,13 @@ def start_oauth_flow(
         project_id: Initial GCP project ID to bake into the stored creds.
                     Can be discovered/updated later via update_project_ids().
     """
-    endpoints = resolve_gemini_oauth_endpoints()
-
     if not force_relogin:
         existing = load_credentials()
         if existing and existing.access_token:
             logger.info("Google OAuth credentials already present; skipping login.")
             return existing
 
+    endpoints = resolve_gemini_oauth_endpoints()
     client_id = _require_client_id()  # raises GoogleOAuthError with install hints
     client_secret = _get_client_secret()
 

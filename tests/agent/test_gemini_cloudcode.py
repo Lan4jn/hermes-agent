@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import stat
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -403,8 +405,122 @@ class TestOAuthEndpointRouting:
         for secret in ("token-secret", "authorization-secret", "verifier-secret"):
             assert secret not in message
 
+    @pytest.mark.parametrize(
+        ("status", "request_kind", "custom_endpoint"),
+        [
+            (400, "exchange", True),
+            (500, "refresh", True),
+            (400, "exchange", False),
+            (500, "refresh", False),
+        ],
+    )
+    def test_token_http_errors_redact_response_and_endpoint_url(
+        self, monkeypatch, caplog, status, request_kind, custom_endpoint
+    ):
+        from agent import google_oauth
+        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+
+        endpoints = (
+            _custom_oauth_endpoints()
+            if custom_endpoint
+            else resolve_gemini_oauth_endpoints({})
+        )
+        authorization_code = "authorization-code-value"
+        refresh_token = "refresh-token-value"
+        access_token = "access-token-value"
+        client_secret = "client-secret-value"
+        response_body = (
+            f"<html>upstream exploded</html> {authorization_code} {refresh_token} "
+            f"{access_token} {client_secret}"
+        )
+
+        def reject(request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                status,
+                "unsafe upstream reason",
+                {},
+                io.BytesIO(response_body.encode()),
+            )
+
+        monkeypatch.setattr(google_oauth.urllib.request, "urlopen", reject)
+
+        with pytest.raises(google_oauth.GoogleOAuthError) as caught:
+            if request_kind == "exchange":
+                google_oauth.exchange_code(
+                    authorization_code,
+                    "verifier",
+                    "http://127.0.0.1/callback",
+                    client_secret=client_secret,
+                    endpoints=endpoints,
+                )
+            else:
+                google_oauth.refresh_access_token(
+                    refresh_token,
+                    client_secret=client_secret,
+                    endpoints=endpoints,
+                )
+
+        assert caught.value.code == "google_oauth_token_http_error"
+        assert f"HTTP {status}" in str(caught.value)
+        assert caught.value.__cause__ is None
+        rendered = str(caught.value) + caplog.text
+        for secret in (
+            response_body,
+            "<html>upstream exploded</html>",
+            authorization_code,
+            refresh_token,
+            access_token,
+            client_secret,
+            endpoints.oauth_token_url,
+        ):
+            assert secret not in rendered
+
 
 class TestOAuthFlowEndpointRouting:
+    def test_existing_credentials_skip_endpoint_resolution(self, monkeypatch):
+        from agent import google_oauth
+
+        existing = google_oauth.GoogleCredentials(
+            access_token="cached-access",
+            refresh_token="cached-refresh",
+            expires_ms=int((time.time() + 3600) * 1000),
+        )
+        google_oauth.save_credentials(existing)
+        monkeypatch.setattr(
+            google_oauth,
+            "resolve_gemini_oauth_endpoints",
+            lambda: pytest.fail("existing credentials must skip endpoint resolution"),
+        )
+
+        result = google_oauth.start_oauth_flow(force_relogin=False)
+
+        assert result == existing
+
+    def test_force_relogin_resolves_endpoints_before_network(self, monkeypatch):
+        from agent import google_oauth
+        from agent.gemini_endpoints import GeminiEndpointConfigError
+
+        existing = google_oauth.GoogleCredentials(
+            access_token="cached-access",
+            refresh_token="cached-refresh",
+            expires_ms=int((time.time() + 3600) * 1000),
+        )
+        google_oauth.save_credentials(existing)
+        monkeypatch.setattr(
+            google_oauth,
+            "resolve_gemini_oauth_endpoints",
+            lambda: (_ for _ in ()).throw(GeminiEndpointConfigError("invalid endpoint")),
+        )
+        monkeypatch.setattr(
+            google_oauth,
+            "_require_client_id",
+            lambda: pytest.fail("network setup must not continue"),
+        )
+
+        with pytest.raises(GeminiEndpointConfigError, match="invalid endpoint"):
+            google_oauth.start_oauth_flow(force_relogin=True)
+
     def test_start_flow_resolves_once_and_threads_same_endpoints(
         self, monkeypatch, capsys
     ):
