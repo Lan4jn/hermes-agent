@@ -37,12 +37,20 @@ class GeminiOAuthEndpoints:
 
 
 def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, bool]:
-    if value is None or (isinstance(value, str) and not value.strip()):
+    if value is None or value == "":
         return default, False
     if not isinstance(value, str):
         raise GeminiEndpointConfigError(f"{field}: must be a URL string")
+    if value != value.strip():
+        raise GeminiEndpointConfigError(
+            f"{field}: surrounding whitespace is not allowed"
+        )
+    if any(ord(char) < 0x20 or ord(char) == 0x7F or char.isspace() for char in value):
+        raise GeminiEndpointConfigError(
+            f"{field}: whitespace and control characters are not allowed"
+        )
 
-    candidate = value.strip()
+    candidate = value
     if "?" in candidate:
         raise GeminiEndpointConfigError(f"{field}: query strings are not allowed")
     if "#" in candidate:

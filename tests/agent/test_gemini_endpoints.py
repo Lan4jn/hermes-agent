@@ -94,7 +94,7 @@ def test_empty_endpoint_values_use_independent_defaults() -> None:
     endpoints = resolve_gemini_oauth_endpoints(
         _config(
             oauth_authorize_url="",
-            oauth_token_url="   ",
+            oauth_token_url="",
             oauth_userinfo_url=None,
             code_assist_base_url="",
         )
@@ -132,6 +132,57 @@ def test_empty_query_or_fragment_delimiters_are_rejected(url: str) -> None:
         resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
 
     assert url not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        " https://example.test/token",
+        "https://example.test/token ",
+        "ht\ntps://example.test/token",
+        "https://exam\tple.test/token",
+        "https://example.test/to\rken",
+        "https://exam\x00ple.test/token",
+        "https://example.test/to\x00ken",
+    ],
+    ids=[
+        "leading-whitespace",
+        "trailing-whitespace",
+        "newline-in-scheme",
+        "tab-in-host",
+        "carriage-return-in-path",
+        "nul-in-host",
+        "nul-in-path",
+    ],
+)
+def test_endpoint_rejects_raw_whitespace_and_control_characters(url: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    message = str(caught.value)
+    assert "oauth_token_url" in message
+    assert url not in message
+
+
+@pytest.mark.parametrize(
+    "character",
+    [
+        *(chr(code) for code in range(0x20) if code not in {0, 9, 10, 13}),
+        "\x7f",
+        "\u00a0",
+    ],
+)
+def test_endpoint_rejects_other_c0_del_and_unicode_whitespace(
+    character: str,
+) -> None:
+    url = f"https://example.test/to{character}ken"
+
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    message = str(caught.value)
+    assert "oauth_token_url" in message
+    assert url not in message
 
 
 @pytest.mark.parametrize(
@@ -208,11 +259,48 @@ def test_none_config_loads_each_active_profile(monkeypatch, tmp_path) -> None:
     assert second.oauth_token_url == "https://second.example.test/token"
 
 
+def test_context_local_home_overrides_resolve_independent_profiles(tmp_path) -> None:
+    from hermes_constants import (
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+
+    first_home = tmp_path / "first-override"
+    second_home = tmp_path / "second-override"
+    first_home.mkdir()
+    second_home.mkdir()
+    (first_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://first.example.test/token")),
+        encoding="utf-8",
+    )
+    (second_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://second.example.test/token")),
+        encoding="utf-8",
+    )
+
+    first_token = set_hermes_home_override(first_home)
+    try:
+        first = resolve_gemini_oauth_endpoints()
+    finally:
+        reset_hermes_home_override(first_token)
+
+    second_token = set_hermes_home_override(second_home)
+    try:
+        second = resolve_gemini_oauth_endpoints()
+    finally:
+        reset_hermes_home_override(second_token)
+
+    assert first.oauth_token_url == "https://first.example.test/token"
+    assert second.oauth_token_url == "https://second.example.test/token"
+
+
 def test_public_exports_are_explicit() -> None:
     from agent import gemini_endpoints
 
-    assert gemini_endpoints.__all__ == [
+    required_exports = {
         "GeminiEndpointConfigError",
         "GeminiOAuthEndpoints",
         "resolve_gemini_oauth_endpoints",
-    ]
+    }
+
+    assert required_exports.issubset(gemini_endpoints.__all__)
