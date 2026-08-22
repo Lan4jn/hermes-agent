@@ -358,23 +358,25 @@ def _build_gateway_cmd_script(
     lines.append(f'set "HERMES_HOME={hermes_home}"')
     lines.append('set "PYTHONIOENCODING=utf-8"')
     lines.append('set "HERMES_GATEWAY_DETACHED=1"')
+    pythonw_path, venv_dir, extra_pythonpath = _resolve_detached_python(python_path)
     # VIRTUAL_ENV lets the gateway's own python detection find the venv
     # if someone imports hermes_constants-based logic during startup.
-    venv_dir = str(Path(python_path).resolve().parent.parent)
     lines.append(f'set "VIRTUAL_ENV={venv_dir}"')
-
-    pythonw_path = _derive_venv_pythonw(python_path)
+    project_root = str(Path(__file__).resolve().parent.parent)
+    pythonpath_entries = [project_root, *extra_pythonpath] if extra_pythonpath else [project_root]
+    pythonpath_value = os.pathsep.join(pythonpath_entries)
+    lines.append(f'set "PYTHONPATH={pythonpath_value}{os.pathsep}%PYTHONPATH%"')
     prog_args = [pythonw_path, "-m", "hermes_cli.main"]
     if profile_arg:
         prog_args.extend(profile_arg.split())
     prog_args.extend(["gateway", "run"])
-    # `pythonw.exe` is a GUI-subsystem executable: cmd.exe launches it and
-    # returns immediately, so the Scheduled Task action finishes without a
-    # visible console window. Do NOT use `start` here; that creates an extra
-    # wrapper process and made gateway lifecycle/status harder to reason about.
+    # Batch files wait for directly invoked executables, including pythonw.exe.
+    # `start "" /b` makes cmd.exe launch the gateway and return immediately
+    # without opening a second console window, so the Scheduled Task action
+    # does not stay "Running" for the lifetime of the gateway.
     # Do NOT use `--replace` for service-managed starts; repeated /Run calls
     # should be idempotent, not churn parent/child takeover loops.
-    lines.append(" ".join(_quote_cmd_script_arg(a) for a in prog_args))
+    lines.append('start "" /b ' + " ".join(_quote_cmd_script_arg(a) for a in prog_args))
     lines.append("exit /b 0")
     return "\r\n".join(lines) + "\r\n"
 
@@ -537,12 +539,12 @@ def _read_pyvenv_cfg(venv_dir: Path) -> dict[str, str]:
 def _resolve_detached_python(python_exe: str) -> tuple[str, Path, list[str]]:
     """Return (windowed_python, venv_dir, extra_pythonpath) for detached runs.
 
-    uv-created Windows venv launchers are special: ``venv\\Scripts\\pythonw.exe``
-    starts hidden, but then respawns the base interpreter as console
-    ``python.exe``.  That child opens a visible Windows Terminal tab.  For uv
-    venvs, use the base ``pythonw.exe`` directly and put the repo + venv
-    site-packages on ``PYTHONPATH`` so imports still resolve without the venv
-    launcher.
+    Windows venv ``pythonw.exe`` launchers can stay alive as wrappers after
+    respawning the base interpreter. For service-style gateway starts, that
+    keeps the Scheduled Task action and its ``cmd.exe`` parent in a running
+    state. When ``pyvenv.cfg`` tells us where the base Python lives, use the
+    base ``pythonw.exe`` directly and put the repo + venv site-packages on
+    ``PYTHONPATH`` so imports still resolve without the venv launcher.
     """
     p = Path(python_exe)
     venv_dir = p.parent.parent
@@ -550,7 +552,7 @@ def _resolve_detached_python(python_exe: str) -> tuple[str, Path, list[str]]:
 
     cfg = _read_pyvenv_cfg(venv_dir)
     home = cfg.get("home", "")
-    if "uv" in cfg and home:
+    if home:
         base_pythonw = Path(home) / "pythonw.exe"
         site_packages = venv_dir / "Lib" / "site-packages"
         if base_pythonw.exists() and site_packages.exists():

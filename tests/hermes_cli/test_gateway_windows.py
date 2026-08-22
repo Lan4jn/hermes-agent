@@ -202,8 +202,36 @@ def test_gateway_cmd_script_uses_pythonw_without_replace_or_start_churn(monkeypa
     assert "pythonw.exe" in content
     assert "gateway run" in content
     assert "--replace" not in content
-    assert "start \"\"" not in content
+    assert "start \"\" /b" in content
     assert "exit /b 0" in content
+
+
+def test_gateway_cmd_script_uses_resolved_detached_python_for_uv_launcher(monkeypatch, tmp_path):
+    """Scheduled Task wrapper must not keep uv's venv pythonw launcher alive."""
+    base_pythonw = tmp_path / "uv" / "pythonw.exe"
+    venv_dir = tmp_path / "project" / "venv"
+    site_packages = venv_dir / "Lib" / "site-packages"
+    base_pythonw.parent.mkdir(parents=True)
+    site_packages.mkdir(parents=True)
+    base_pythonw.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        gateway_windows,
+        "_resolve_detached_python",
+        lambda _exe: (str(base_pythonw), venv_dir, [str(site_packages)]),
+    )
+
+    content = gateway_windows._build_gateway_cmd_script(
+        str(venv_dir / "Scripts" / "python.exe"),
+        r"C:\\HermesHome",
+        r"C:\\HermesHome",
+        "",
+    )
+
+    assert str(base_pythonw) in content
+    assert str(venv_dir / "Scripts" / "pythonw.exe") not in content
+    assert f"set \"VIRTUAL_ENV={venv_dir}\"" in content
+    assert str(site_packages) in content
 
 
 def test_elevated_gateway_command_uses_pythonw_hidden_console(monkeypatch):

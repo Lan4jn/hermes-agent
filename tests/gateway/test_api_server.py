@@ -3588,6 +3588,76 @@ class TestMessageAPIEndpoint:
                 assert "disabled" in data["command"]["error"].lower()
                 mock_exec.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_message_command_authorized_by_header_api_key(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command", return_value={"output": "root", "exit_code": 0}) as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"X-Hermes-Api-Key": "node-key-1"},
+                    json={"command": "whoami"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                assert data["command"]["output"] == "root"
+                assert "exec_token" in data
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_authorized_by_header_exec_token(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
+        )
+        token, _ = await auth_adapter._message_token_store.issue(60)
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command", return_value={"output": "ok", "exit_code": 0}) as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"X-Hermes-Exec-Token": token},
+                    json={"command": "date"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_shared_memory_notes_records_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "shared_memory_notes_enabled": True},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", return_value=({"final_response": "Hello back!", "session_id": "s-1"}, {})):
+                resp = await cli.post(
+                    "/message",
+                    json={"message": "Hello from Node B", "sender_id": "node-b", "sender_display_name": "Node B"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["reply"] == "Hello back!"
+
+        notes_dir = tmp_path / "memories" / "node_messages"
+        assert notes_dir.exists()
+        files = list(notes_dir.glob("*.md"))
+        assert len(files) == 1
+        content = files[0].read_text(encoding="utf-8")
+        assert "Hello from Node B" in content
+        assert "Hello back!" in content
+        assert "Node B" in content
+
 
 # ---------------------------------------------------------------------------
 # /api/message/sessions endpoints

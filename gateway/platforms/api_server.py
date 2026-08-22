@@ -820,6 +820,9 @@ class APIServerAdapter(BasePlatformAdapter):
         self._message_api_allow_command_execution = bool(
             self._message_api_cfg.get("allow_command_execution", False)
         )
+        self._message_api_shared_memory_notes_enabled = bool(
+            self._message_api_cfg.get("shared_memory_notes_enabled", False)
+        )
         self._message_api_keys = self._parse_message_api_keys(self._message_api_cfg.get("api_keys", []))
         self._message_api_token_ttl_seconds = self._parse_message_api_ttl(
             self._message_api_cfg.get("token_ttl_seconds", DEFAULT_MESSAGE_API_TOKEN_TTL_SECONDS)
@@ -1379,8 +1382,19 @@ class APIServerAdapter(BasePlatformAdapter):
         sender_name = str(body.get("sender_display_name") or "").strip()
         message = str(body.get("message") or "").strip()
         command = str(body.get("command") or "").strip()
-        body_api_key = str(body.get("api_key") or "").strip()
-        exec_token = str(body.get("exec_token") or "").strip()
+
+        header_api_key = (
+            str(request.headers.get("X-Hermes-Api-Key") or "").strip()
+            or str(request.headers.get("X-Api-Key") or "").strip()
+            or str(request.headers.get("api-key") or "").strip()
+        )
+        header_exec_token = (
+            str(request.headers.get("X-Hermes-Exec-Token") or "").strip()
+            or str(request.headers.get("X-Exec-Token") or "").strip()
+            or str(request.headers.get("exec-token") or "").strip()
+        )
+        body_api_key = str(body.get("api_key") or "").strip() or header_api_key
+        exec_token = str(body.get("exec_token") or "").strip() or header_exec_token
 
         if not any((message, command, body_api_key, exec_token)):
             return web.json_response(
@@ -1427,6 +1441,14 @@ class APIServerAdapter(BasePlatformAdapter):
             reply = result.get("final_response") or result.get("error") or ""
             response_payload["reply"] = reply
             response_payload["session_id"] = result.get("session_id", session_id)
+            if self._message_api_shared_memory_notes_enabled and reply:
+                self._record_shared_message_note(
+                    session_id=response_payload["session_id"],
+                    sender_id=sender_id,
+                    sender_name=sender_name,
+                    user_message=message,
+                    reply=reply,
+                )
 
         if command:
             if not self._message_api_allow_command_execution:
@@ -1458,6 +1480,43 @@ class APIServerAdapter(BasePlatformAdapter):
                 response_payload["command"]["error"] = err_text
 
         return web.json_response(response_payload)
+
+    def _record_shared_message_note(
+        self,
+        session_id: str,
+        sender_id: str,
+        sender_name: str,
+        user_message: str,
+        reply: str,
+    ) -> None:
+        """Write a sanitized, bounded note for a completed /message turn."""
+        if not self._message_api_shared_memory_notes_enabled:
+            return
+        try:
+            from datetime import datetime, timezone
+            from hermes_constants import get_hermes_home
+
+            notes_dir = get_hermes_home() / "memories" / "node_messages"
+            notes_dir.mkdir(parents=True, exist_ok=True)
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            note_file = notes_dir / f"{today_str}.md"
+
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            sender_label = sender_name or sender_id or "remote"
+            msg_snippet = user_message.strip()[:300]
+            reply_snippet = reply.strip()[:500]
+
+            entry = (
+                f"\n### [{ts}] Node Message Turn\n"
+                f"- **Session**: `{session_id}`\n"
+                f"- **Sender**: {sender_label} (`{sender_id}`)\n"
+                f"- **Request**: {msg_snippet}\n"
+                f"- **Response**: {reply_snippet}\n"
+            )
+            with open(note_file, "a", encoding="utf-8") as f:
+                f.write(entry)
+        except Exception as exc:
+            logger.warning("Failed to record shared message memory note: %s", exc)
 
     async def _handle_list_message_sessions(self, request: "web.Request") -> "web.Response":
         """GET /api/message/sessions — list /message-only conversations."""

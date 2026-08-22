@@ -41,14 +41,20 @@ DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65535
 
 
-def is_native_gemini_base_url(base_url: str) -> bool:
+def is_native_gemini_base_url(base_url: str, provider: Optional[str] = None) -> bool:
     """Return True when the endpoint speaks Gemini's native REST API."""
     normalized = str(base_url or "").strip().rstrip("/").lower()
     if not normalized:
+        return provider in ("gemini", "google", "google-ai-studio")
+    if normalized.endswith("/openai") or normalized.endswith("/v1"):
         return False
-    if "generativelanguage.googleapis.com" not in normalized:
-        return False
-    return not normalized.endswith("/openai")
+    if "generativelanguage.googleapis.com" in normalized:
+        return True
+    if "/v1beta" in normalized or "/v1alpha" in normalized or normalized.endswith("/models"):
+        return True
+    if provider in ("gemini", "google", "google-ai-studio"):
+        return True
+    return False
 
 
 def probe_gemini_tier(

@@ -44,6 +44,10 @@ class TestHermesApiServerToolset:
         for tool in ["ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service"]:
             assert tool in tools, f"Missing HA tool: {tool}"
 
+    def test_toolset_includes_configured_hermes_peer_messaging(self):
+        tools = resolve_toolset("hermes-api-server")
+        assert "send_hermes_message" in tools
+
     def test_toolset_excludes_clarify(self):
         tools = resolve_toolset("hermes-api-server")
         assert "clarify" not in tools
@@ -62,6 +66,17 @@ class TestApiServerPlatformConfig:
         from hermes_cli.tools_config import PLATFORMS
         assert "api_server" in PLATFORMS
         assert PLATFORMS["api_server"]["default_toolset"] == "hermes-api-server"
+
+    def test_explicit_api_server_toolsets_recover_configured_peer_messaging(self):
+        from hermes_cli.tools_config import _get_platform_tools
+
+        config = {
+            "platform_toolsets": {
+                "api_server": ["web", "terminal", "file"],
+            }
+        }
+
+        assert "peer_messaging" in _get_platform_tools(config, "api_server")
 
 
 class TestApiServerAdapterToolset:
@@ -123,4 +138,4 @@ class TestApiServerAdapterToolset:
             mock_agent_cls.assert_called_once()
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
-            assert sorted(toolsets) == ["terminal", "web"]
+            assert sorted(toolsets) == ["peer_messaging", "terminal", "web"]

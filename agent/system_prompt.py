@@ -228,17 +228,41 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         from hermes_cli.config import load_config as _load_cfg
         _cfg = _load_cfg() or {}
         _plat_cfg = (_cfg.get("platforms") or {}).get("api_server") or {}
-        _msg_cfg = _plat_cfg.get("message_api") or {}
+        _plat_extra = _plat_cfg.get("extra") or {}
+        _msg_cfg = _plat_cfg.get("message_api") or _plat_extra.get("message_api") or {}
         _msg_enabled = bool(_plat_cfg.get("enabled")) and bool(_msg_cfg.get("enabled", True))
         if _msg_enabled:
-            _host = str(_plat_cfg.get("host") or "127.0.0.1").strip() or "127.0.0.1"
-            _port = _plat_cfg.get("port") or 8642
+            _host = str(_plat_cfg.get("host") or _plat_extra.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+            _port = _plat_cfg.get("port") or _plat_extra.get("port") or 8642
             _allow_cmd = bool(_msg_cfg.get("allow_command_execution", False))
+            _peer_lines = []
+            _peers = _msg_cfg.get("peers") or []
+            if isinstance(_peers, list):
+                for _peer in _peers:
+                    if not isinstance(_peer, dict):
+                        continue
+                    _name = str(_peer.get("name") or "").strip()
+                    _url = str(_peer.get("url") or _peer.get("message_url") or "").strip()
+                    if not _name or not _url:
+                        continue
+                    _desc = str(_peer.get("description") or "").strip()
+                    _line = f"  - {_name}: {_url}"
+                    if _desc:
+                        _line += f" ({_desc})"
+                    _peer_lines.append(_line)
+            _peer_block = ""
+            if _peer_lines:
+                _peer_block = "- Configured Hermes peers:\n" + "\n".join(_peer_lines) + "\n"
             stable_parts.append(
                 "Hermes Node Messaging:\n"
                 f"- This Hermes instance exposes a node-messaging endpoint at POST http://{_host}:{_port}/message.\n"
                 "- Use it to chat with or coordinate other Hermes instances.\n"
+                f"{_peer_block}"
                 "- Valid JSON fields are exactly: session_id, sender_id, sender_display_name, message, command, api_key, exec_token.\n"
+                '- To send a normal chat message, POST JSON like: {"session_id":"peer-chat","sender_id":"hermes","sender_display_name":"Hermes","message":"hello from another Hermes"}.\n'
+                "- Read the remote Hermes reply from the JSON 'reply' field and keep using the same session_id for continuity.\n"
+                "- No api_key is required for normal message-only chat. api_key/exec_token are only for command execution.\n"
+                "- If contacting another machine, use that machine's reachable host/port; 127.0.0.1 always means the current machine.\n"
                 f"- message_api.allow_command_execution is {'true' if _allow_cmd else 'false'} on this instance. "
                 "Do not assume remote command execution is available unless explicitly allowed by configuration."
             )
