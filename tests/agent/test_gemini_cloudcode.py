@@ -3488,7 +3488,10 @@ class TestRunGeminiOauthLoginPure:
     def test_returns_pool_compatible_dict(self, monkeypatch):
         from agent import google_oauth
 
+        calls = []
+
         def fake_start(**kw):
+            calls.append(kw)
             return google_oauth.GoogleCredentials(
                 access_token="at", refresh_token="rt",
                 expires_ms=int((time.time() + 3600) * 1000),
@@ -3503,3 +3506,54 @@ class TestRunGeminiOauthLoginPure:
         assert result["email"] == "u@e.com"
         assert result["project_id"] == "p"
         assert isinstance(result["expires_at_ms"], int)
+        assert calls == [{"force_relogin": True}]
+
+    def test_existing_credentials_are_replaced_after_successful_relogin(self, monkeypatch):
+        from agent import google_oauth
+
+        existing = google_oauth.GoogleCredentials(
+            access_token="old-access",
+            refresh_token="old-refresh",
+            expires_ms=int((time.time() + 3600) * 1000),
+        )
+        replacement = google_oauth.GoogleCredentials(
+            access_token="new-access",
+            refresh_token="new-refresh",
+            expires_ms=int((time.time() + 7200) * 1000),
+        )
+        google_oauth.save_credentials(existing)
+
+        def successful_relogin(**kwargs):
+            assert kwargs == {"force_relogin": True}
+            google_oauth.save_credentials(replacement)
+            return replacement
+
+        monkeypatch.setattr(google_oauth, "start_oauth_flow", successful_relogin)
+
+        result = google_oauth.run_gemini_oauth_login_pure()
+
+        assert result["access_token"] == "new-access"
+        assert google_oauth.load_credentials() == replacement
+
+    def test_failed_relogin_preserves_existing_credentials(self, monkeypatch):
+        from agent import google_oauth
+
+        existing = google_oauth.GoogleCredentials(
+            access_token="old-access",
+            refresh_token="old-refresh",
+            expires_ms=int((time.time() + 3600) * 1000),
+            email="old@example.com",
+        )
+        google_oauth.save_credentials(existing)
+        monkeypatch.setattr(
+            google_oauth,
+            "resolve_gemini_oauth_endpoints",
+            lambda: (_ for _ in ()).throw(
+                google_oauth.GoogleOAuthError("login failed", code="oauth_failed")
+            ),
+        )
+
+        with pytest.raises(google_oauth.GoogleOAuthError, match="login failed"):
+            google_oauth.run_gemini_oauth_login_pure()
+
+        assert google_oauth.load_credentials() == existing

@@ -2048,10 +2048,27 @@ def clear_provider_auth(provider_id: Optional[str] = None) -> bool:
             auth_store["active_provider"] = None
             cleared = True
 
-        if not cleared:
-            return False
-        _save_auth_store(auth_store)
-    return True
+        if cleared:
+            _save_auth_store(auth_store)
+
+    if target != "google-gemini-cli":
+        return cleared
+
+    try:
+        from agent.google_oauth import _credentials_path, clear_credentials
+
+        credentials_path = _credentials_path()
+        had_credentials = credentials_path.exists()
+        clear_credentials()
+        if credentials_path.exists():
+            raise OSError("Google OAuth credentials still exist after cleanup")
+    except Exception as exc:
+        raise AuthError(
+            "Could not clear Google Gemini OAuth credentials.",
+            provider="google-gemini-cli",
+            code="google_oauth_clear_failed",
+        ) from exc
+    return cleared or had_credentials
 
 
 def deactivate_provider() -> None:
@@ -7622,7 +7639,7 @@ def _logout_default_provider_from_config() -> Optional[str]:
     "No provider is currently logged in" and never reset model.provider.
     """
     provider = _get_config_provider()
-    if provider in {"nous", "openai-codex", "xai-oauth"}:
+    if provider in {"nous", "openai-codex", "xai-oauth", "google-gemini-cli"}:
         return provider
     return None
 
@@ -9495,7 +9512,13 @@ def logout_command(args) -> None:
     should_reset_config = _should_reset_config_provider_on_logout(target)
     provider_name = get_auth_provider_display_name(target)
 
-    if clear_provider_auth(target) or should_reset_config:
+    try:
+        cleared = clear_provider_auth(target)
+    except AuthError:
+        print(f"Failed to log out of {provider_name}.")
+        raise SystemExit(1)
+
+    if cleared or should_reset_config:
         if should_reset_config:
             _reset_config_provider()
         print(f"Logged out of {provider_name}.")

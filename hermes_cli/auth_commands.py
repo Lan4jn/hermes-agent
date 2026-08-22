@@ -81,6 +81,8 @@ def _normalize_provider(provider: str) -> str:
         return "openrouter"
     if normalized in {"grok-oauth", "xai-oauth", "x-ai-oauth", "xai-grok-oauth"}:
         return "xai-oauth"
+    if normalized in {"gemini-cli", "gemini-oauth"}:
+        return "google-gemini-cli"
     # Check if it matches a custom provider name
     custom_key = _resolve_custom_provider_input(normalized)
     if custom_key:
@@ -430,7 +432,9 @@ def auth_add_command(args) -> None:
         )
     if provider == "google-gemini-cli":
         from agent.google_oauth import run_gemini_oauth_login_pure
+        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
 
+        code_assist_base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
         creds = run_gemini_oauth_login_pure()
         auth_mod._mark_google_gemini_cli_active(creds)
         label = (getattr(args, "label", None) or "").strip() or (
@@ -445,8 +449,8 @@ def auth_add_command(args) -> None:
             source=f"{SOURCE_MANUAL}:google_oauth",
             access_token=creds.get("access_token", ""),
             refresh_token=creds.get("refresh_token"),
-            expires_at_ms=creds.get("expires_ms"),
-            base_url=creds.get("base_url") or auth_mod.DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
+            expires_at_ms=creds.get("expires_at_ms"),
+            base_url=creds.get("base_url") or code_assist_base_url,
         )
         pool.add_entry(entry)
         auth_mod.mark_provider_active_if_unset(provider)
@@ -549,7 +553,10 @@ def auth_status_command(args) -> None:
 
 
 def auth_logout_command(args) -> None:
-    auth_mod.logout_command(SimpleNamespace(provider=getattr(args, "provider", None)))
+    provider = getattr(args, "provider", None)
+    auth_mod.logout_command(
+        SimpleNamespace(provider=_normalize_provider(provider) if provider else None)
+    )
 
 
 def auth_spotify_command(args) -> None:

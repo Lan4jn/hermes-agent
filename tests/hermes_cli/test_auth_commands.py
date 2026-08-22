@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import json
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -479,7 +481,7 @@ def test_auth_add_google_gemini_cli_sets_active_provider(tmp_path, monkeypatch):
             "access_token": "ya29.test-token",
             "refresh_token": "google-refresh",
             "email": "user@example.com",
-            "expires_ms": 9999999999000,
+            "expires_at_ms": 9999999999000,
             "project_id": "my-project",
         },
     )
@@ -503,6 +505,7 @@ def test_auth_add_google_gemini_cli_sets_active_provider(tmp_path, monkeypatch):
     entries = payload["credential_pool"]["google-gemini-cli"]
     entry = next(item for item in entries if item["source"] == "manual:google_oauth")
     assert entry["access_token"] == "ya29.test-token"
+    assert entry["expires_at_ms"] == 9999999999000
 
 
 def test_auth_remove_reindexes_priorities(tmp_path, monkeypatch):
@@ -631,6 +634,258 @@ def test_clear_provider_auth_removes_provider_pool_entries(tmp_path, monkeypatch
     assert "anthropic" not in payload.get("providers", {})
     assert "anthropic" not in payload.get("credential_pool", {})
     assert "openrouter" in payload.get("credential_pool", {})
+
+
+def test_clear_gemini_auth_removes_store_and_file_outside_store_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "active_provider": "google-gemini-cli",
+            "providers": {"google-gemini-cli": {"email": "user@example.com"}},
+            "credential_pool": {"google-gemini-cli": [{"access_token": "pool-token"}]},
+        },
+    )
+
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    import hermes_cli.auth as auth_mod
+
+    save_credentials(GoogleCredentials(
+        access_token="file-token", refresh_token="file-refresh", expires_ms=9999999999000,
+    ))
+    lock_depth = 0
+    original_lock = auth_mod._auth_store_lock
+    original_clear = __import__("agent.google_oauth", fromlist=["clear_credentials"]).clear_credentials
+
+    @contextmanager
+    def tracked_lock(*args, **kwargs):
+        nonlocal lock_depth
+        with original_lock(*args, **kwargs):
+            lock_depth += 1
+            try:
+                yield
+            finally:
+                lock_depth -= 1
+
+    def clear_google_file():
+        assert lock_depth == 0
+        original_clear()
+
+    monkeypatch.setattr(auth_mod, "_auth_store_lock", tracked_lock)
+    monkeypatch.setattr("agent.google_oauth.clear_credentials", clear_google_file)
+
+    assert auth_mod.clear_provider_auth("google-gemini-cli") is True
+    payload = json.loads((tmp_path / "hermes" / "auth.json").read_text())
+    assert payload["active_provider"] is None
+    assert "google-gemini-cli" not in payload["providers"]
+    assert "google-gemini-cli" not in payload["credential_pool"]
+    assert not (tmp_path / "hermes" / "auth" / "google_oauth.json").exists()
+
+
+def test_clear_gemini_file_only_is_true_then_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth import clear_provider_auth
+
+    save_credentials(GoogleCredentials(
+        access_token="file-token", refresh_token="file-refresh", expires_ms=9999999999000,
+    ))
+
+    assert clear_provider_auth("google-gemini-cli") is True
+    assert clear_provider_auth("google-gemini-cli") is False
+
+
+def test_clear_non_google_provider_does_not_import_google_oauth(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {"version": 1, "providers": {"anthropic": {"access_token": "token"}}},
+    )
+    import builtins
+    from hermes_cli.auth import clear_provider_auth
+
+    original_import = builtins.__import__
+
+    def reject_google_import(name, *args, **kwargs):
+        if name == "agent.google_oauth":
+            pytest.fail("non-Google logout must not import agent.google_oauth")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_google_import)
+
+    assert clear_provider_auth("anthropic") is True
+
+
+def test_logout_gemini_clear_failure_is_safe_and_nonzero(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth import logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="secret-token", refresh_token="secret-refresh", expires_ms=9999999999000,
+    ))
+    monkeypatch.setattr(
+        "agent.google_oauth.clear_credentials",
+        lambda: (_ for _ in ()).throw(OSError("C:/private/profile secret-token")),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        logout_command(SimpleNamespace(provider="google-gemini-cli"))
+
+    assert exc_info.value.code == 1
+    output = capsys.readouterr().out
+    assert "Failed to log out of Google Gemini" in output
+    assert "secret-token" not in output
+    assert "C:/private/profile" not in output
+
+
+def test_logout_gemini_detects_silent_clear_failure(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth import logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="secret-token", refresh_token="secret-refresh", expires_ms=9999999999000,
+    ))
+    monkeypatch.setattr("agent.google_oauth.clear_credentials", lambda: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        logout_command(SimpleNamespace(provider="google-gemini-cli"))
+
+    assert exc_info.value.code == 1
+    assert "Failed to log out of Google Gemini" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("alias", ["gemini-cli", "gemini-oauth"])
+def test_auth_logout_gemini_alias_clears_file(alias, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth_commands import auth_logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="token", refresh_token="refresh", expires_ms=9999999999000,
+    ))
+
+    auth_logout_command(SimpleNamespace(provider=alias))
+
+    assert not (tmp_path / "hermes" / "auth" / "google_oauth.json").exists()
+
+
+def test_logout_gemini_resets_only_matching_model_provider(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "hermes"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+    (hermes_home / "config.yaml").write_text(
+        "model:\n"
+        "  default: gemini-2.5-pro\n"
+        "  provider: google-gemini-cli\n"
+        "  base_url: cloudcode-pa://google\n"
+    )
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth import logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="token", refresh_token="refresh", expires_ms=9999999999000,
+    ))
+    logout_command(SimpleNamespace(provider="google-gemini-cli"))
+
+    config_text = (hermes_home / "config.yaml").read_text()
+    assert "provider: auto" in config_text
+    assert "base_url: https://openrouter.ai/api/v1" in config_text
+
+
+def test_logout_gemini_leaves_other_model_provider_unchanged(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "hermes"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}, "credential_pool": {}})
+    original_config = (
+        "model:\n"
+        "  default: claude-sonnet-4\n"
+        "  provider: anthropic\n"
+        "  base_url: https://api.anthropic.com\n"
+    )
+    (hermes_home / "config.yaml").write_text(original_config)
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth import logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="token", refresh_token="refresh", expires_ms=9999999999000,
+    ))
+    logout_command(SimpleNamespace(provider="google-gemini-cli"))
+
+    assert (hermes_home / "config.yaml").read_text() == original_config
+
+
+def test_gemini_custom_endpoints_survive_add_logout_and_relogin(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "profile"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    (hermes_home / "auth.json").write_text(
+        json.dumps({"version": 1, "providers": {}, "credential_pool": {}})
+    )
+    custom = {
+        "oauth_authorize_url": "https://auth.example.test/custom/authorize",
+        "oauth_token_url": "https://auth.example.test/custom/token",
+        "oauth_userinfo_url": "https://auth.example.test/custom/userinfo",
+        "code_assist_base_url": "https://code.example.test/private/root",
+    }
+    (hermes_home / "config.yaml").write_text(
+        "providers:\n"
+        "  google-gemini-cli:\n"
+        + "".join(f"    {key}: {value}\n" for key, value in custom.items())
+    )
+
+    from agent import google_oauth
+    from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+    from hermes_cli.auth import get_auth_status
+    from hermes_cli.auth_commands import auth_add_command, auth_logout_command
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+
+    flows = []
+
+    def successful_flow(**kwargs):
+        endpoints = resolve_gemini_oauth_endpoints()
+        flows.append((kwargs, endpoints))
+        creds = google_oauth.GoogleCredentials(
+            access_token=f"access-{len(flows)}",
+            refresh_token=f"refresh-{len(flows)}",
+            expires_ms=9999999999000,
+            email="user@example.com",
+        )
+        google_oauth.save_credentials(creds)
+        return creds
+
+    monkeypatch.setattr(google_oauth, "start_oauth_flow", successful_flow)
+    args = SimpleNamespace(
+        provider="google-gemini-cli", auth_type="oauth", api_key=None, label=None,
+    )
+
+    auth_add_command(args)
+    assert resolve_runtime_provider(requested="google-gemini-cli")["base_url"] == custom[
+        "code_assist_base_url"
+    ]
+    auth_logout_command(SimpleNamespace(provider="google-gemini-cli"))
+    assert get_auth_status("google-gemini-cli")["logged_in"] is False
+    assert not (hermes_home / "auth" / "google_oauth.json").exists()
+
+    auth_add_command(args)
+
+    assert len(flows) == 2
+    assert [call[0] for call in flows] == [{"force_relogin": True}] * 2
+    for _, endpoints in flows:
+        assert endpoints.oauth_authorize_url == custom["oauth_authorize_url"]
+        assert endpoints.oauth_token_url == custom["oauth_token_url"]
+        assert endpoints.oauth_userinfo_url == custom["oauth_userinfo_url"]
+        assert endpoints.code_assist_base_url == custom["code_assist_base_url"]
+    assert resolve_runtime_provider(requested="google-gemini-cli")["base_url"] == custom[
+        "code_assist_base_url"
+    ]
 
 
 def test_logout_resets_codex_config_when_auth_state_already_cleared(tmp_path, monkeypatch, capsys):
