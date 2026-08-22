@@ -125,7 +125,9 @@ def code_assist_sensitive_values(base_url: object) -> tuple[str, ...]:
         with_slash = f"/{path.lstrip('/')}"
         without_slash = with_slash.lstrip("/")
         if with_slash != "/":
-            values.update((with_slash, without_slash, f"{origin}{with_slash}"))
+            values.update((with_slash, f"{origin}{with_slash}"))
+            if len([segment for segment in with_slash.split("/") if segment]) > 1:
+                values.add(without_slash)
     return tuple(sorted(values, key=lambda value: (-len(value), value)))
 
 

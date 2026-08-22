@@ -155,6 +155,29 @@ def test_code_assist_sensitive_decoding_is_bounded_to_three_layers() -> None:
     assert "/private/\"customer" not in values
 
 
+def test_single_segment_sensitive_paths_do_not_include_generic_slashless_tokens() -> None:
+    values = code_assist_sensitive_values("https://proxy.example.test/error")
+    encoded_values = code_assist_sensitive_values(
+        "https://proxy.example.test/%65rror"
+    )
+
+    assert "/error" in values
+    assert "https://proxy.example.test/error" in values
+    assert "error" not in values
+    assert "/error" in encoded_values
+    assert "https://proxy.example.test/error" in encoded_values
+    assert "error" not in encoded_values
+
+
+def test_multi_segment_sensitive_paths_keep_slashless_form() -> None:
+    values = code_assist_sensitive_values(
+        "https://proxy.example.test/private/customer"
+    )
+
+    assert "/private/customer" in values
+    assert "private/customer" in values
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

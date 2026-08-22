@@ -2825,6 +2825,79 @@ class TestGeminiCloudCodeClient:
         finally:
             client.close()
 
+    def test_single_segment_proxy_path_preserves_google_error_envelope(
+        self, monkeypatch, caplog,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: "token",
+        )
+
+        def handler(request):
+            return httpx.Response(429, json={"error": {
+                "message": "quota exhausted at /error",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "23s",
+                }],
+            }})
+
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/error", project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert "error" in error.response.json()
+            assert error.code == "code_assist_rate_limited"
+            assert error.retry_after == 23.0
+            assert error.response.headers["Retry-After"] == "23"
+            assert classified.reason == FailoverReason.rate_limit
+            rendered = "\n".join((
+                str(error), repr(error.details), error.response.text,
+                repr(classified), classified.message, caplog.text,
+            ))
+            assert "/error" not in rendered
+        finally:
+            client.close()
+
+    def test_multi_segment_proxy_path_still_redacts_slashless_echo(
+        self, monkeypatch,
+    ):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: "token",
+        )
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/private/customer",
+            project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(500, json={
+                "error": {"message": "private/customer", "status": "INTERNAL"}
+            })
+        ))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            assert "private/customer" not in str(exc_info.value)
+            assert "private/customer" not in exc_info.value.response.text
+        finally:
+            client.close()
+
     def test_custom_404_names_configured_endpoint(self, monkeypatch):
         from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
         from agent.google_code_assist import CodeAssistError
