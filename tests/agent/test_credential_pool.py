@@ -150,6 +150,106 @@ def test_upsert_entry_persists_duplicate_removal_and_clears_runtime_state(
     ]
 
 
+@pytest.mark.parametrize(
+    ("write_order", "expected_id", "expected_token"),
+    [
+        ("ab", "cred-b", "token-b"),
+        ("ba", "cred-a", "token-a"),
+    ],
+)
+def test_stale_pool_upserts_replace_singleton_without_losing_other_source(
+    write_order, expected_id, expected_token, tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
+    from agent.credential_pool import load_pool
+
+    pool_a = load_pool("google-gemini-cli")
+    pool_b = load_pool("google-gemini-cli")
+    other_pool = load_pool("google-gemini-cli")
+    entry_a = _pooled_credential(id="cred-a", access_token="token-a")
+    entry_b = _pooled_credential(id="cred-b", access_token="token-b")
+    writers = {"a": (pool_a, entry_a), "b": (pool_b, entry_b)}
+
+    first_pool, first_entry = writers[write_order[0]]
+    second_pool, second_entry = writers[write_order[1]]
+    first_pool.upsert_entry(first_entry)
+    other_pool.add_entry(_pooled_credential(
+        id="cred-other",
+        source="manual:other",
+        label="other",
+        access_token="other-token",
+    ))
+    second_pool.upsert_entry(second_entry)
+
+    reloaded = load_pool("google-gemini-cli").entries()
+    singleton = [entry for entry in reloaded if entry.source == "manual:google_oauth"]
+    assert [(entry.id, entry.access_token) for entry in singleton] == [
+        (expected_id, expected_token)
+    ]
+    assert [(entry.id, entry.access_token) for entry in reloaded if entry.source == "manual:other"] == [
+        ("cred-other", "other-token")
+    ]
+
+
+def test_repeated_stale_pool_singleton_upserts_leave_one_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.credential_pool import load_pool
+
+    for round_number in range(5):
+        _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
+        stale_pools = [load_pool("google-gemini-cli") for _ in range(3)]
+        for writer_number, pool in enumerate(stale_pools):
+            pool.upsert_entry(_pooled_credential(
+                id=f"cred-{round_number}-{writer_number}",
+                access_token=f"token-{round_number}-{writer_number}",
+            ))
+
+        singleton = [
+            entry for entry in load_pool("google-gemini-cli").entries()
+            if entry.source == "manual:google_oauth"
+        ]
+        assert [(entry.id, entry.access_token) for entry in singleton] == [
+            (f"cred-{round_number}-2", f"token-{round_number}-2")
+        ]
+
+
+@pytest.mark.parametrize("write_order", ["ab", "ba"])
+def test_stale_pool_upserts_for_different_sources_still_merge(
+    write_order, tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
+    from agent.credential_pool import load_pool
+
+    pool_a = load_pool("google-gemini-cli")
+    pool_b = load_pool("google-gemini-cli")
+    writers = {
+        "a": (pool_a, _pooled_credential(id="cred-a", access_token="token-a")),
+        "b": (
+            pool_b,
+            _pooled_credential(
+                id="cred-b",
+                source="manual:other",
+                label="other",
+                access_token="token-b",
+            ),
+        ),
+    }
+
+    for writer_name in write_order:
+        pool, entry = writers[writer_name]
+        pool.upsert_entry(entry)
+
+    assert {
+        entry.source: (entry.id, entry.access_token)
+        for entry in load_pool("google-gemini-cli").entries()
+    } == {
+        "manual:google_oauth": ("cred-a", "token-a"),
+        "manual:other": ("cred-b", "token-b"),
+    }
+
+
 def test_upsert_entry_persists_only_when_changed(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     from agent.credential_pool import CredentialPool
@@ -157,14 +257,14 @@ def test_upsert_entry_persists_only_when_changed(tmp_path, monkeypatch):
     entry = _pooled_credential()
     pool = CredentialPool("google-gemini-cli", [entry])
     persisted = []
-    monkeypatch.setattr(pool, "_persist", lambda: persisted.append(True))
+    monkeypatch.setattr(pool, "_persist", lambda **kwargs: persisted.append(kwargs))
 
     assert pool.upsert_entry(entry) == entry
     assert persisted == []
 
     changed = _pooled_credential(access_token="access-new")
     assert pool.upsert_entry(changed).access_token == "access-new"
-    assert persisted == [True]
+    assert persisted == [{"replace_sources": ["manual:google_oauth"]}]
 
 
 def test_upsert_entry_token_change_clears_orphaned_error_state(tmp_path, monkeypatch):

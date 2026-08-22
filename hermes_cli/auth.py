@@ -1746,6 +1746,7 @@ def write_credential_pool(
     entries: List[Dict[str, Any]],
     *,
     removed_ids: Optional[Iterable[str]] = None,
+    replace_sources: Optional[Iterable[str]] = None,
 ) -> Path:
     """Persist one provider's credential pool under auth.json.
 
@@ -1764,8 +1765,13 @@ def write_credential_pool(
 
     Pass ``removed_ids`` for entries the caller intentionally removed, so the
     merge does not resurrect them from the on-disk copy.
+
+    Pass ``replace_sources`` for singleton credential sources whose in-memory
+    entries replace every on-disk entry for that source. Other sources retain
+    the normal concurrent-add merge behavior.
     """
     removed = {rid for rid in (removed_ids or ()) if rid}
+    replaced_sources = {source for source in (replace_sources or ()) if source}
     with _auth_store_lock():
         auth_store = _load_auth_store()
         pool = auth_store.get("credential_pool")
@@ -1802,6 +1808,8 @@ def write_credential_pool(
                 continue
             disk_id = disk_entry.get("id")
             if not disk_id or disk_id in new_ids or disk_id in removed:
+                continue
+            if disk_entry.get("source") in replaced_sources:
                 continue
             merged.append(sanitize_borrowed_credential_payload(disk_entry, provider_id))
         pool[provider_id] = merged

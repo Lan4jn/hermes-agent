@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from hermes_constants import OPENROUTER_BASE_URL
 from hermes_cli.config import load_env
@@ -774,14 +774,22 @@ class CredentialPool:
                     self._entries[idx] = new
                     return
 
-    def _persist(self, *, removed_ids: Optional[List[str]] = None) -> None:
+    def _persist(
+        self,
+        *,
+        removed_ids: Optional[List[str]] = None,
+        replace_sources: Optional[Iterable[str]] = None,
+    ) -> None:
         # Self-locking (RLock): snapshotting self._entries must not race a
         # concurrent rotation when called from the deferred refresh path.
         with self._lock:
+            kwargs = {"removed_ids": removed_ids}
+            if replace_sources is not None:
+                kwargs["replace_sources"] = replace_sources
             write_credential_pool(
                 self.provider,
                 [entry.to_dict() for entry in self._entries],
-                removed_ids=removed_ids,
+                **kwargs,
             )
 
     def _is_terminal_auth_failure(
@@ -2435,9 +2443,12 @@ class CredentialPool:
                 self._active_leases.pop(entry_id, None)
             if changed:
                 if removed_ids:
-                    self._persist(removed_ids=removed_ids)
+                    self._persist(
+                        removed_ids=removed_ids,
+                        replace_sources=[entry.source],
+                    )
                 else:
-                    self._persist()
+                    self._persist(replace_sources=[entry.source])
             return matching
 
 
