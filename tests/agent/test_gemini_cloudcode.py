@@ -22,6 +22,18 @@ from pathlib import Path
 import pytest
 
 
+def _custom_oauth_endpoints():
+    from agent.gemini_endpoints import GeminiOAuthEndpoints
+
+    return GeminiOAuthEndpoints(
+        oauth_authorize_url="https://login.example.test/custom/authorize",
+        oauth_token_url="https://login.example.test/custom/token",
+        oauth_userinfo_url="https://profile.example.test/custom/userinfo",
+        code_assist_base_url="https://code.example.test",
+        custom_code_assist=True,
+    )
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -279,6 +291,250 @@ class TestAccessTokenExpired:
         assert creds.access_token_expired() is True
 
 
+class TestOAuthEndpointRouting:
+    def test_official_aliases_and_legacy_calls_use_official_urls(self, monkeypatch):
+        from agent import google_oauth
+        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+
+        official = resolve_gemini_oauth_endpoints({})
+        assert google_oauth.AUTH_ENDPOINT == official.oauth_authorize_url
+        assert google_oauth.TOKEN_ENDPOINT == official.oauth_token_url
+        assert google_oauth.USERINFO_ENDPOINT == official.oauth_userinfo_url
+
+        urls = []
+        monkeypatch.setattr(
+            google_oauth,
+            "_post_form",
+            lambda url, data, timeout: urls.append(url) or {},
+        )
+        google_oauth.exchange_code("legacy-code", "verifier", "http://localhost")
+        google_oauth.refresh_access_token("legacy-refresh")
+
+        assert urls == [official.oauth_token_url, official.oauth_token_url]
+
+    def test_exchange_and_refresh_use_custom_token_url(self, monkeypatch):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        requests = []
+        monkeypatch.setattr(
+            google_oauth,
+            "_post_form",
+            lambda url, data, timeout: requests.append((url, data)) or {},
+        )
+
+        google_oauth.exchange_code(
+            "authorization-code",
+            "verifier",
+            "http://127.0.0.1/callback",
+            endpoints=endpoints,
+        )
+        google_oauth.refresh_access_token("refresh-secret", endpoints=endpoints)
+
+        assert [url for url, _ in requests] == [
+            endpoints.oauth_token_url,
+            endpoints.oauth_token_url,
+        ]
+        assert requests[0][1]["code"] == "authorization-code"
+        assert requests[1][1]["refresh_token"] == "refresh-secret"
+
+    def test_userinfo_request_uses_custom_url_with_only_alt_json(self, monkeypatch):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"email":"user@example.test"}'
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers["Authorization"]
+            return Response()
+
+        monkeypatch.setattr(google_oauth.urllib.request, "urlopen", fake_urlopen)
+
+        email = google_oauth._fetch_user_email("access-secret", endpoints=endpoints)
+
+        assert email == "user@example.test"
+        assert captured == {
+            "url": endpoints.oauth_userinfo_url + "?alt=json",
+            "authorization": "Bearer access-secret",
+        }
+
+    def test_invalid_profile_endpoint_fails_before_exchange_network(self, monkeypatch):
+        from agent import google_oauth
+        from agent.gemini_endpoints import GeminiEndpointConfigError
+
+        config_path = Path.home() / ".hermes" / "config.yaml"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "providers": {
+                        "google-gemini-cli": {
+                            "oauth_token_url": (
+                                "https://alice:token-secret@example.test/token"
+                            )
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            google_oauth,
+            "_post_form",
+            lambda *args, **kwargs: pytest.fail("network request must not run"),
+        )
+
+        with pytest.raises(GeminiEndpointConfigError) as caught:
+            google_oauth.exchange_code(
+                "authorization-secret", "verifier-secret", "http://localhost"
+            )
+
+        message = str(caught.value)
+        for secret in ("token-secret", "authorization-secret", "verifier-secret"):
+            assert secret not in message
+
+
+class TestOAuthFlowEndpointRouting:
+    def test_start_flow_resolves_once_and_threads_same_endpoints(
+        self, monkeypatch, capsys
+    ):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        resolved = []
+        received = {}
+
+        class Server:
+            server_address = (google_oauth.REDIRECT_HOST, 43123)
+
+            def serve_forever(self):
+                google_oauth._OAuthCallbackHandler.captured_code = "callback-code"
+                google_oauth._OAuthCallbackHandler.ready.set()
+
+            def shutdown(self):
+                pass
+
+            def server_close(self):
+                pass
+
+        def fake_resolve():
+            resolved.append(True)
+            return endpoints
+
+        def fake_exchange(code, verifier, redirect_uri, **kwargs):
+            received["exchange"] = (code, redirect_uri, kwargs["endpoints"])
+            return {
+                "access_token": "access-secret",
+                "refresh_token": "refresh-secret",
+                "expires_in": 3600,
+            }
+
+        def fake_persist(token_resp, **kwargs):
+            received["persist"] = kwargs["endpoints"]
+            return google_oauth.GoogleCredentials(
+                access_token=token_resp["access_token"],
+                refresh_token=token_resp["refresh_token"],
+                expires_ms=int((time.time() + 3600) * 1000),
+            )
+
+        monkeypatch.setattr(google_oauth, "resolve_gemini_oauth_endpoints", fake_resolve)
+        monkeypatch.setattr(google_oauth, "_bind_callback_server", lambda port: (Server(), 43123))
+        monkeypatch.setattr(google_oauth, "exchange_code", fake_exchange)
+        monkeypatch.setattr(google_oauth, "_persist_token_response", fake_persist)
+
+        google_oauth.start_oauth_flow(force_relogin=True, open_browser=False)
+
+        output = capsys.readouterr().out
+        authorize_url = next(
+            line.strip() for line in output.splitlines() if line.strip().startswith("https://")
+        )
+        parsed = google_oauth.urllib.parse.urlparse(authorize_url)
+        assert (parsed.netloc, parsed.path) == (
+            "login.example.test",
+            "/custom/authorize",
+        )
+        assert len(resolved) == 1
+        assert received["exchange"] == (
+            "callback-code",
+            "http://127.0.0.1:43123/oauth2callback",
+            endpoints,
+        )
+        assert received["persist"] is endpoints
+
+    def test_headless_start_passes_resolved_endpoints_to_paste_mode(self, monkeypatch):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        received = []
+        monkeypatch.setenv("HERMES_HEADLESS", "1")
+        monkeypatch.setattr(
+            google_oauth, "resolve_gemini_oauth_endpoints", lambda: endpoints
+        )
+
+        def fake_paste(*args, **kwargs):
+            received.append(kwargs["endpoints"])
+            return google_oauth.GoogleCredentials(
+                access_token="access",
+                refresh_token="refresh",
+                expires_ms=int((time.time() + 3600) * 1000),
+            )
+
+        monkeypatch.setattr(google_oauth, "_paste_mode_login", fake_paste)
+
+        google_oauth.start_oauth_flow(force_relogin=True)
+
+        assert received == [endpoints]
+
+    def test_paste_mode_uses_custom_authorize_and_threads_endpoints(
+        self, monkeypatch, capsys
+    ):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        received = {}
+        monkeypatch.setattr(google_oauth, "_prompt_paste_fallback", lambda: "pasted-code")
+
+        def fake_exchange(code, verifier, redirect_uri, **kwargs):
+            received["exchange"] = kwargs["endpoints"]
+            return {"access_token": "access", "refresh_token": "refresh"}
+
+        def fake_persist(token_resp, **kwargs):
+            received["persist"] = kwargs["endpoints"]
+            return google_oauth.GoogleCredentials(
+                access_token="access",
+                refresh_token="refresh",
+                expires_ms=int((time.time() + 3600) * 1000),
+            )
+
+        monkeypatch.setattr(google_oauth, "exchange_code", fake_exchange)
+        monkeypatch.setattr(google_oauth, "_persist_token_response", fake_persist)
+
+        google_oauth._paste_mode_login(
+            "verifier", "challenge", "state", "client", "secret", "project",
+            endpoints=endpoints,
+        )
+
+        output = capsys.readouterr().out
+        authorize_url = next(
+            line.strip() for line in output.splitlines() if line.strip().startswith("https://")
+        )
+        parsed = google_oauth.urllib.parse.urlparse(authorize_url)
+        assert (parsed.netloc, parsed.path) == (
+            "login.example.test",
+            "/custom/authorize",
+        )
+        assert received == {"exchange": endpoints, "persist": endpoints}
+
 class TestGetValidAccessToken:
     def _save(self, **over):
         from agent.google_oauth import GoogleCredentials, save_credentials
@@ -291,11 +547,54 @@ class TestGetValidAccessToken:
         defaults.update(over)
         save_credentials(GoogleCredentials(**defaults))
 
-    def test_returns_cached_when_fresh(self):
-        from agent.google_oauth import get_valid_access_token
+    def test_returns_cached_when_fresh(self, monkeypatch):
+        from agent import google_oauth
 
         self._save(access_token="cached-token")
-        assert get_valid_access_token() == "cached-token"
+        monkeypatch.setattr(
+            google_oauth,
+            "resolve_gemini_oauth_endpoints",
+            lambda: pytest.fail("fresh tokens must not resolve endpoint config"),
+        )
+        assert google_oauth.get_valid_access_token() == "cached-token"
+
+    @pytest.mark.parametrize(
+        ("expires_delta", "force_refresh"),
+        [(30, False), (3600, True)],
+        ids=["expired", "forced"],
+    )
+    def test_refresh_uses_current_profile_custom_endpoint(
+        self, monkeypatch, expires_delta, force_refresh
+    ):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        config_path = Path.home() / ".hermes" / "config.yaml"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "providers": {
+                        "google-gemini-cli": {
+                            "oauth_token_url": endpoints.oauth_token_url,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._save(expires_ms=int((time.time() + expires_delta) * 1000))
+        urls = []
+        monkeypatch.setattr(
+            google_oauth,
+            "_post_form",
+            lambda url, data, timeout: urls.append(url)
+            or {"access_token": "refreshed", "expires_in": 3600},
+        )
+
+        token = google_oauth.get_valid_access_token(force_refresh=force_refresh)
+
+        assert token == "refreshed"
+        assert urls == [endpoints.oauth_token_url]
 
     def test_refreshes_when_near_expiry(self, monkeypatch):
         from agent import google_oauth

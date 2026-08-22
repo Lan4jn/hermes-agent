@@ -59,6 +59,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from agent.gemini_endpoints import (
+    GeminiOAuthEndpoints,
+    _DEFAULT_ENDPOINTS,
+    resolve_gemini_oauth_endpoints,
+)
 from hermes_constants import get_hermes_home, secure_parent_dir
 
 logger = logging.getLogger(__name__)
@@ -112,9 +117,9 @@ _CLIENT_SECRET_SHAPE = _re.compile(r"(GOCSPX-[A-Za-z0-9_-]{20,})")
 # Endpoints & constants
 # =============================================================================
 
-AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
-TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v1/userinfo"
+AUTH_ENDPOINT = _DEFAULT_ENDPOINTS["oauth_authorize_url"]
+TOKEN_ENDPOINT = _DEFAULT_ENDPOINTS["oauth_token_url"]
+USERINFO_ENDPOINT = _DEFAULT_ENDPOINTS["oauth_userinfo_url"]
 
 OAUTH_SCOPES = (
     "https://www.googleapis.com/auth/cloud-platform "
@@ -581,8 +586,10 @@ def exchange_code(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
     timeout: float = TOKEN_REQUEST_TIMEOUT_SECONDS,
+    endpoints: GeminiOAuthEndpoints | None = None,
 ) -> Dict[str, Any]:
     """Exchange authorization code for access + refresh tokens."""
+    resolved = endpoints if endpoints is not None else resolve_gemini_oauth_endpoints()
     cid = client_id if client_id is not None else _get_client_id()
     csecret = client_secret if client_secret is not None else _get_client_secret()
     data = {
@@ -594,7 +601,7 @@ def exchange_code(
     }
     if csecret:
         data["client_secret"] = csecret
-    return _post_form(TOKEN_ENDPOINT, data, timeout)
+    return _post_form(resolved.oauth_token_url, data, timeout)
 
 
 def refresh_access_token(
@@ -603,8 +610,10 @@ def refresh_access_token(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
     timeout: float = TOKEN_REQUEST_TIMEOUT_SECONDS,
+    endpoints: GeminiOAuthEndpoints | None = None,
 ) -> Dict[str, Any]:
     """Refresh the access token."""
+    resolved = endpoints if endpoints is not None else resolve_gemini_oauth_endpoints()
     if not refresh_token:
         raise GoogleOAuthError(
             "Cannot refresh: refresh_token is empty. Re-run OAuth login.",
@@ -619,14 +628,21 @@ def refresh_access_token(
     }
     if csecret:
         data["client_secret"] = csecret
-    return _post_form(TOKEN_ENDPOINT, data, timeout)
+    return _post_form(resolved.oauth_token_url, data, timeout)
 
 
-def _fetch_user_email(access_token: str, timeout: float = TOKEN_REQUEST_TIMEOUT_SECONDS) -> str:
+def _fetch_user_email(
+    access_token: str,
+    timeout: float = TOKEN_REQUEST_TIMEOUT_SECONDS,
+    *,
+    endpoints: GeminiOAuthEndpoints | None = None,
+) -> str:
     """Best-effort userinfo fetch for display. Failures return empty string."""
+    resolved = endpoints if endpoints is not None else resolve_gemini_oauth_endpoints()
     try:
+        query = urllib.parse.urlencode({"alt": "json"})
         request = urllib.request.Request(
-            USERINFO_ENDPOINT + "?alt=json",
+            f"{resolved.oauth_userinfo_url}?{query}",
             headers={"Authorization": f"Bearer {access_token}"},
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -684,7 +700,8 @@ def get_valid_access_token(*, force_refresh: bool = False) -> str:
 
     try:
         try:
-            resp = refresh_access_token(rt)
+            endpoints = resolve_gemini_oauth_endpoints()
+            resp = refresh_access_token(rt, endpoints=endpoints)
         except GoogleOAuthError as exc:
             if exc.code == "google_oauth_invalid_grant":
                 logger.warning(
@@ -848,6 +865,8 @@ def start_oauth_flow(
         project_id: Initial GCP project ID to bake into the stored creds.
                     Can be discovered/updated later via update_project_ids().
     """
+    endpoints = resolve_gemini_oauth_endpoints()
+
     if not force_relogin:
         existing = load_credentials()
         if existing and existing.access_token:
@@ -863,7 +882,15 @@ def start_oauth_flow(
     # If headless, skip the listener and go straight to paste mode
     if _is_headless() and open_browser:
         logger.info("Headless environment detected; using paste-mode OAuth fallback.")
-        return _paste_mode_login(verifier, challenge, state, client_id, client_secret, project_id)
+        return _paste_mode_login(
+            verifier,
+            challenge,
+            state,
+            client_id,
+            client_secret,
+            project_id,
+            endpoints=endpoints,
+        )
 
     server, port = _bind_callback_server(DEFAULT_REDIRECT_PORT)
     redirect_uri = f"http://{REDIRECT_HOST}:{port}{CALLBACK_PATH}"
@@ -885,7 +912,7 @@ def start_oauth_flow(
         "access_type": "offline",
         "prompt": "consent",
     }
-    auth_url = AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params) + "#hermes"
+    auth_url = endpoints.oauth_authorize_url + "?" + urllib.parse.urlencode(params) + "#hermes"
 
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -944,8 +971,11 @@ def start_oauth_flow(
     token_resp = exchange_code(
         code, verifier, redirect_uri,
         client_id=client_id, client_secret=client_secret,
+        endpoints=endpoints,
     )
-    return _persist_token_response(token_resp, project_id=project_id)
+    return _persist_token_response(
+        token_resp, project_id=project_id, endpoints=endpoints
+    )
 
 
 def _paste_mode_login(
@@ -955,8 +985,11 @@ def _paste_mode_login(
     client_id: str,
     client_secret: str,
     project_id: str,
+    *,
+    endpoints: GeminiOAuthEndpoints | None = None,
 ) -> GoogleCredentials:
     """Run OAuth flow without a local callback server."""
+    resolved = endpoints if endpoints is not None else resolve_gemini_oauth_endpoints()
     # Use a placeholder redirect URI; user will paste the full URL back
     redirect_uri = f"http://{REDIRECT_HOST}:{DEFAULT_REDIRECT_PORT}{CALLBACK_PATH}"
     params = {
@@ -970,7 +1003,7 @@ def _paste_mode_login(
         "access_type": "offline",
         "prompt": "consent",
     }
-    auth_url = AUTH_ENDPOINT + "?" + urllib.parse.urlencode(params) + "#hermes"
+    auth_url = resolved.oauth_authorize_url + "?" + urllib.parse.urlencode(params) + "#hermes"
 
     print()
     print("Open this URL in a browser on any device:")
@@ -987,8 +1020,11 @@ def _paste_mode_login(
     token_resp = exchange_code(
         code, verifier, redirect_uri,
         client_id=client_id, client_secret=client_secret,
+        endpoints=resolved,
     )
-    return _persist_token_response(token_resp, project_id=project_id)
+    return _persist_token_response(
+        token_resp, project_id=project_id, endpoints=resolved
+    )
 
 
 def _prompt_paste_fallback() -> Optional[str]:
@@ -1012,7 +1048,9 @@ def _persist_token_response(
     token_resp: Dict[str, Any],
     *,
     project_id: str = "",
+    endpoints: GeminiOAuthEndpoints | None = None,
 ) -> GoogleCredentials:
+    resolved = endpoints if endpoints is not None else resolve_gemini_oauth_endpoints()
     access_token = str(token_resp.get("access_token", "") or "").strip()
     refresh_token = str(token_resp.get("refresh_token", "") or "").strip()
     expires_in = int(token_resp.get("expires_in", 0) or 0)
@@ -1025,7 +1063,7 @@ def _persist_token_response(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_ms=int((time.time() + max(60, expires_in)) * 1000),
-        email=_fetch_user_email(access_token),
+        email=_fetch_user_email(access_token, endpoints=resolved),
         project_id=project_id,
         managed_project_id="",
     )
