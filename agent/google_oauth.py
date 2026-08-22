@@ -556,7 +556,6 @@ def _post_form(url: str, data: Dict[str, str], timeout: float) -> Dict[str, Any]
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
-            return json.loads(raw)
     except urllib.error.HTTPError as exc:
         oauth_error = ""
         try:
@@ -574,11 +573,25 @@ def _post_form(url: str, data: Dict[str, str], timeout: float) -> Dict[str, Any]
             f"Google OAuth token endpoint returned HTTP {exc.code}.",
             code=code,
         ) from None
-    except urllib.error.URLError:
+    except Exception:
         raise GoogleOAuthError(
             "Google OAuth token request failed.",
-            code="google_oauth_token_network_error",
+            code="google_oauth_token_request_failed",
         ) from None
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        raise GoogleOAuthError(
+            "Google OAuth token response was invalid.",
+            code="google_oauth_token_invalid_response",
+        ) from None
+    if not isinstance(payload, dict):
+        raise GoogleOAuthError(
+            "Google OAuth token response was invalid.",
+            code="google_oauth_token_invalid_response",
+        ) from None
+    return payload
 
 
 def exchange_code(
@@ -652,8 +665,8 @@ def _fetch_user_email(
             raw = response.read().decode("utf-8", errors="replace")
         data = json.loads(raw)
         return str(data.get("email", "") or "")
-    except Exception as exc:
-        logger.debug("Userinfo fetch failed (non-fatal): %s", exc)
+    except Exception:
+        logger.debug("Google userinfo lookup failed")
         return ""
 
 

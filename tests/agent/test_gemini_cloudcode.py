@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.server
 import io
 import json
+import logging
 import stat
+import threading
 import time
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -371,6 +375,47 @@ class TestOAuthEndpointRouting:
             "authorization": "Bearer access-secret",
         }
 
+    def test_userinfo_http_error_logs_only_fixed_category(self, monkeypatch, caplog):
+        from agent import google_oauth
+
+        endpoints = _custom_oauth_endpoints()
+        access_token = "access-token-value"
+        refresh_token = "refresh-token-value"
+        client_secret = "client-secret-value"
+        response_body = (
+            f"<html>{access_token} {refresh_token} {client_secret} "
+            f"{endpoints.oauth_userinfo_url}</html>"
+        )
+
+        def reject(request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url,
+                403,
+                response_body,
+                {},
+                io.BytesIO(response_body.encode()),
+            )
+
+        monkeypatch.setattr(google_oauth.urllib.request, "urlopen", reject)
+        caplog.set_level(logging.DEBUG, logger=google_oauth.__name__)
+
+        assert google_oauth._fetch_user_email(
+            access_token, endpoints=endpoints
+        ) == ""
+
+        assert "Google userinfo lookup failed" in caplog.text
+        for unsafe in (
+            access_token,
+            refresh_token,
+            client_secret,
+            endpoints.oauth_userinfo_url,
+            response_body,
+            "HTTPError",
+            "Traceback",
+            "HTTP Error",
+        ):
+            assert unsafe not in caplog.text
+
     def test_invalid_profile_endpoint_fails_before_exchange_network(self, monkeypatch):
         from agent import google_oauth
         from agent.gemini_endpoints import GeminiEndpointConfigError
@@ -475,6 +520,175 @@ class TestOAuthEndpointRouting:
             endpoints.oauth_token_url,
         ):
             assert secret not in rendered
+
+    @pytest.mark.parametrize("failure_kind", ["timeout", "read"])
+    def test_token_request_failures_are_sanitized(
+        self, monkeypatch, failure_kind
+    ):
+        from agent import google_oauth
+
+        endpoint_url = "http://127.0.0.1:9/private/token"
+        unsafe_detail = f"access-secret refresh-secret {endpoint_url}"
+
+        class BrokenResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                raise OSError(unsafe_detail)
+
+        def fail(request, timeout):
+            if failure_kind == "timeout":
+                raise TimeoutError(unsafe_detail)
+            return BrokenResponse()
+
+        monkeypatch.setattr(google_oauth.urllib.request, "urlopen", fail)
+
+        with pytest.raises(google_oauth.GoogleOAuthError) as caught:
+            google_oauth._post_form(
+                endpoint_url, {"client_secret": "client-secret"}, 0.01
+            )
+
+        assert caught.value.code == "google_oauth_token_request_failed"
+        assert str(caught.value) == "Google OAuth token request failed."
+        assert caught.value.__cause__ is None
+        for unsafe in (unsafe_detail, endpoint_url, "access-secret", "refresh-secret"):
+            assert unsafe not in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "raw_response",
+        [
+            b"not-json access-secret refresh-secret",
+            b'["access-secret", "refresh-secret"]',
+        ],
+        ids=["invalid-json", "non-dict-json"],
+    )
+    def test_token_invalid_responses_are_sanitized(
+        self, monkeypatch, raw_response
+    ):
+        from agent import google_oauth
+
+        endpoint_url = "http://127.0.0.1:9/private/token"
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return raw_response
+
+        monkeypatch.setattr(
+            google_oauth.urllib.request, "urlopen", lambda request, timeout: Response()
+        )
+
+        with pytest.raises(google_oauth.GoogleOAuthError) as caught:
+            google_oauth._post_form(
+                endpoint_url, {"client_secret": "client-secret"}, 0.01
+            )
+
+        assert caught.value.code == "google_oauth_token_invalid_response"
+        assert str(caught.value) == "Google OAuth token response was invalid."
+        assert caught.value.__cause__ is None
+        rendered = str(caught.value)
+        for unsafe in (endpoint_url, "access-secret", "refresh-secret", "client-secret"):
+            assert unsafe not in rendered
+
+
+class TestOAuthLoopbackE2E:
+    def test_custom_token_and_userinfo_requests_use_loopback_server(self):
+        from agent import google_oauth
+        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+
+        observed = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+                observed["post_path"] = self.path
+                observed["grant_type"] = form.get("grant_type", [None])[0]
+                payload = json.dumps(
+                    {
+                        "access_token": "loopback-access",
+                        "refresh_token": "loopback-refresh",
+                        "expires_in": 3600,
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_GET(self):
+                parsed = urllib.parse.urlparse(self.path)
+                observed["userinfo_path"] = parsed.path
+                observed["userinfo_query"] = urllib.parse.parse_qs(parsed.query)
+                observed["authorization_present"] = bool(
+                    self.headers.get("Authorization")
+                )
+                payload = b'{"email":"loopback@example.test"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_address[1]
+            endpoints = resolve_gemini_oauth_endpoints(
+                {
+                    "providers": {
+                        "google-gemini-cli": {
+                            "oauth_authorize_url": (
+                                f"http://127.0.0.1:{port}/authorize"
+                            ),
+                            "oauth_token_url": (
+                                f"http://127.0.0.1:{port}/oauth/token"
+                            ),
+                            "oauth_userinfo_url": (
+                                f"http://127.0.0.1:{port}/oauth/userinfo"
+                            ),
+                        }
+                    }
+                }
+            )
+            token_response = google_oauth.exchange_code(
+                "loopback-code",
+                "loopback-verifier",
+                "http://127.0.0.1/callback",
+                client_id="loopback-client",
+                client_secret="loopback-client-secret",
+                timeout=2,
+                endpoints=endpoints,
+            )
+            email = google_oauth._fetch_user_email(
+                token_response["access_token"], timeout=2, endpoints=endpoints
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        assert thread.is_alive() is False
+        assert observed["post_path"] == "/oauth/token"
+        assert observed["grant_type"] == "authorization_code"
+        assert observed["userinfo_path"] == "/oauth/userinfo"
+        assert observed["userinfo_query"] == {"alt": ["json"]}
+        assert observed["authorization_present"] is True
+        assert email == "loopback@example.test"
 
 
 class TestOAuthFlowEndpointRouting:
