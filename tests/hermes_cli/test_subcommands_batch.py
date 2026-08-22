@@ -10,6 +10,7 @@ import or a builder raising.
 from __future__ import annotations
 
 import argparse
+from unittest.mock import Mock
 
 import pytest
 
@@ -44,6 +45,78 @@ def _h(name):
         return name
     handler.__name__ = f"cmd_{name}"
     return handler
+
+
+def _logout_parser(handler):
+    parser = argparse.ArgumentParser(prog="hermes")
+    sub = parser.add_subparsers(dest="command")
+    build_logout_parser(sub, cmd_logout=handler)
+    return parser
+
+
+@pytest.mark.parametrize(
+    "provider", ["google-gemini-cli", "gemini-cli", "gemini-oauth"],
+)
+def test_logout_parser_clears_google_for_canonical_and_aliases(
+    provider, tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.google_oauth import GoogleCredentials, _credentials_path, save_credentials
+    from hermes_cli.auth import logout_command
+
+    save_credentials(GoogleCredentials(
+        access_token="token", refresh_token="refresh", expires_ms=9999999999000,
+    ))
+    handler = Mock(side_effect=logout_command)
+    args = _logout_parser(handler).parse_args(["logout", "--provider", provider])
+
+    args.func(args)
+
+    assert handler.call_args.args[0].provider == "google-gemini-cli"
+    assert not _credentials_path().exists()
+
+
+@pytest.mark.parametrize("provider", ["nous", "openai-codex", "xai-oauth", "spotify"])
+def test_logout_parser_preserves_existing_providers(provider):
+    handler = Mock()
+    args = _logout_parser(handler).parse_args(["logout", "--provider", provider])
+
+    args.func(args)
+
+    assert handler.call_args.args[0].provider == provider
+
+
+def test_logout_parser_rejects_unknown_provider_friendly(capsys):
+    handler = Mock()
+
+    with pytest.raises(SystemExit) as exc_info:
+        _logout_parser(handler).parse_args(["logout", "--provider", "unknown-provider"])
+
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "invalid choice" in error
+    assert "unknown-provider" in error
+    handler.assert_not_called()
+
+
+def test_auth_logout_parser_clears_google_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    from agent.google_oauth import GoogleCredentials, _credentials_path, save_credentials
+    from hermes_cli.auth_commands import auth_command
+
+    save_credentials(GoogleCredentials(
+        access_token="token", refresh_token="refresh", expires_ms=9999999999000,
+    ))
+    handler = Mock(side_effect=auth_command)
+    parser = argparse.ArgumentParser(prog="hermes")
+    sub = parser.add_subparsers(dest="command")
+    build_auth_parser(sub, cmd_auth=handler)
+    args = parser.parse_args(["auth", "logout", "google-gemini-cli"])
+
+    args.func(args)
+
+    assert handler.call_args.args[0].provider == "google-gemini-cli"
+    assert not _credentials_path().exists()
 
 
 # (subcommand_name, builder, handler_kwargs, sample_argv)

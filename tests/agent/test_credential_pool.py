@@ -102,6 +102,54 @@ def test_upsert_entry_replaces_source_preserving_identity_and_persists(tmp_path,
     assert persisted[1]["access_token"] == "access-new"
 
 
+def test_upsert_entry_persists_duplicate_removal_and_clears_runtime_state(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "google-gemini-cli": [
+                    _pooled_credential().to_dict(),
+                    _pooled_credential(
+                        id="cred-duplicate", priority=8, access_token="duplicate-token",
+                    ).to_dict(),
+                    _pooled_credential(
+                        id="cred-other",
+                        label="other",
+                        priority=9,
+                        source="manual:other",
+                        access_token="other-token",
+                    ).to_dict(),
+                ],
+            },
+        },
+    )
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("google-gemini-cli")
+    pool._current_id = "cred-duplicate"
+    pool._active_leases = {"cred-first": 1, "cred-duplicate": 2, "cred-other": 3}
+
+    result = pool.upsert_entry(_pooled_credential(
+        id="cred-new", priority=99, access_token="access-new",
+    ))
+
+    assert result.id == "cred-first"
+    assert pool.current() is None
+    assert pool._active_leases == {"cred-first": 1, "cred-other": 3}
+    reloaded = load_pool("google-gemini-cli").entries()
+    matching = [entry for entry in reloaded if entry.source == "manual:google_oauth"]
+    assert [(entry.id, entry.access_token) for entry in matching] == [
+        ("cred-first", "access-new")
+    ]
+    assert [(entry.id, entry.access_token) for entry in reloaded if entry.source == "manual:other"] == [
+        ("cred-other", "other-token")
+    ]
+
+
 def test_upsert_entry_persists_only_when_changed(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     from agent.credential_pool import CredentialPool

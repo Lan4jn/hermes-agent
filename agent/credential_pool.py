@@ -2407,6 +2407,10 @@ class CredentialPool:
     def upsert_entry(self, entry: PooledCredential) -> PooledCredential:
         """Replace the credential for one singleton source, or append it."""
         with self._lock:
+            before_matching_ids = [
+                candidate.id for candidate in self._entries
+                if candidate.source == entry.source
+            ]
             changed = _upsert_entry(
                 self._entries,
                 self.provider,
@@ -2417,8 +2421,23 @@ class CredentialPool:
                 candidate for candidate in self._entries
                 if candidate.source == entry.source
             )
+            remaining_matching_ids = {
+                candidate.id for candidate in self._entries
+                if candidate.source == entry.source
+            }
+            removed_ids = [
+                entry_id for entry_id in before_matching_ids
+                if entry_id not in remaining_matching_ids
+            ]
+            if self._current_id in removed_ids:
+                self._current_id = None
+            for entry_id in removed_ids:
+                self._active_leases.pop(entry_id, None)
             if changed:
-                self._persist()
+                if removed_ids:
+                    self._persist(removed_ids=removed_ids)
+                else:
+                    self._persist()
             return matching
 
 
