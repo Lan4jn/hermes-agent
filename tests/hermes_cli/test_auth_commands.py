@@ -8,7 +8,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -554,6 +554,147 @@ def test_auth_add_google_gemini_cli_relogin_replaces_pooled_singleton(
     output = capsys.readouterr().out
     assert "Saved google-gemini-cli OAuth credential" in output
     assert "Added google-gemini-cli OAuth credential #" not in output
+
+
+def test_google_pool_runtime_always_uses_current_profile_endpoint(
+    tmp_path, monkeypatch,
+):
+    from agent.agent_runtime_helpers import create_openai_client
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from cli import HermesCLI
+    from hermes_cli.auth import read_credential_pool
+    from hermes_cli.auth_commands import auth_add_command
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+
+    home = tmp_path / "hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    (home / "auth.json").write_text(json.dumps({
+        "version": 1, "providers": {}, "credential_pool": {},
+    }))
+
+    def write_endpoint(base_url):
+        (home / "config.yaml").write_text(yaml.safe_dump({
+            "providers": {
+                "google-gemini-cli": {"code_assist_base_url": base_url}
+            }
+        }))
+
+    write_endpoint("https://cloudcode-pa.googleapis.com")
+
+    def login():
+        save_credentials(GoogleCredentials(
+            access_token="fresh-google-token",
+            refresh_token="refresh-token",
+            expires_ms=9999999999000,
+            email="user@example.com",
+        ))
+        return {
+            "access_token": "fresh-google-token",
+            "refresh_token": "refresh-token",
+            "expires_at_ms": 9999999999000,
+            "email": "user@example.com",
+        }
+
+    monkeypatch.setattr("agent.google_oauth.run_gemini_oauth_login_pure", login)
+    args = SimpleNamespace(
+        provider="google-gemini-cli", auth_type="oauth", api_key=None, label=None,
+    )
+    auth_add_command(args)
+    pool_entry = read_credential_pool("google-gemini-cli")[0]
+    assert pool_entry.get("base_url") in (None, "cloudcode-pa://google")
+    legacy_store = json.loads((home / "auth.json").read_text())
+    legacy_store["credential_pool"]["google-gemini-cli"][0]["base_url"] = (
+        "https://cloudcode-pa.googleapis.com"
+    )
+    (home / "auth.json").write_text(json.dumps(legacy_store))
+
+    first_custom = "https://proxy.example.test/private/first"
+    write_endpoint(first_custom)
+    first_runtime = resolve_runtime_provider(requested="google-gemini-cli")
+    assert first_runtime["base_url"] == first_custom
+
+    agent = SimpleNamespace(
+        provider="google-gemini-cli", _client_log_context=lambda: "test",
+    )
+    client = create_openai_client(agent, first_runtime, reason="test", shared=False)
+    try:
+        assert client.base_url == first_custom
+    finally:
+        client.close()
+
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.console = MagicMock()
+    cli._app = None
+    with patch("agent.google_code_assist.retrieve_user_quota", return_value=[]) as quota:
+        cli._handle_gquota_command("/gquota")
+    assert quota.call_args.kwargs["base_url"] == first_custom
+
+    second_custom = "https://proxy.example.test/private/second"
+    write_endpoint(second_custom)
+    second_runtime = resolve_runtime_provider(requested="google-gemini-cli")
+    assert second_runtime["base_url"] == second_custom
+    assert "cloudcode-pa.googleapis.com" not in repr(
+        (first_runtime, client.base_url, quota.call_args, second_runtime)
+    )
+
+
+def test_google_pool_endpoint_resolution_is_profile_local(tmp_path, monkeypatch):
+    from agent.google_oauth import GoogleCredentials, save_credentials
+    from hermes_cli.auth_commands import auth_add_command
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+
+    profiles = {
+        "alpha": "https://alpha.example.test/private/code",
+        "beta": "https://beta.example.test/private/code",
+    }
+    args = SimpleNamespace(
+        provider="google-gemini-cli", auth_type="oauth", api_key=None, label=None,
+    )
+
+    for name, base_url in profiles.items():
+        home = tmp_path / "profiles" / name
+        home.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        (home / "auth.json").write_text(json.dumps({
+            "version": 1, "providers": {}, "credential_pool": {},
+        }))
+        (home / "config.yaml").write_text(yaml.safe_dump({
+            "providers": {
+                "google-gemini-cli": {
+                    "code_assist_base_url": "https://cloudcode-pa.googleapis.com"
+                }
+            }
+        }))
+
+        def login(profile=name):
+            token = f"token-{profile}"
+            save_credentials(GoogleCredentials(
+                access_token=token,
+                refresh_token=f"refresh-{profile}",
+                expires_ms=9999999999000,
+            ))
+            return {
+                "access_token": token,
+                "refresh_token": f"refresh-{profile}",
+                "expires_at_ms": 9999999999000,
+            }
+
+        monkeypatch.setattr(
+            "agent.google_oauth.run_gemini_oauth_login_pure", login,
+        )
+        auth_add_command(args)
+        (home / "config.yaml").write_text(yaml.safe_dump({
+            "providers": {
+                "google-gemini-cli": {"code_assist_base_url": base_url}
+            }
+        }))
+
+    for name, base_url in profiles.items():
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "profiles" / name))
+        runtime = resolve_runtime_provider(requested="google-gemini-cli")
+        assert runtime["base_url"] == base_url
+        assert runtime["api_key"] == f"token-{name}"
 
 
 def test_auth_remove_reindexes_priorities(tmp_path, monkeypatch):

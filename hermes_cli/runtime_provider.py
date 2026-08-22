@@ -496,8 +496,10 @@ def _resolve_runtime_from_pool_entry(
         api_mode = "chat_completions"
         base_url = base_url or DEFAULT_QWEN_BASE_URL
     elif provider == "google-gemini-cli":
+        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+
         api_mode = "chat_completions"
-        base_url = base_url or "cloudcode-pa://google"
+        base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
     elif provider == "google-antigravity":
         api_mode = "chat_completions"
         base_url = base_url or "antigravity-pa://google"

@@ -432,9 +432,7 @@ def auth_add_command(args) -> None:
         )
     if provider == "google-gemini-cli":
         from agent.google_oauth import run_gemini_oauth_login_pure
-        from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
 
-        code_assist_base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
         creds = run_gemini_oauth_login_pure()
         auth_mod._mark_google_gemini_cli_active(creds)
         label = (getattr(args, "label", None) or "").strip() or (
@@ -450,7 +448,7 @@ def auth_add_command(args) -> None:
             access_token=creds.get("access_token", ""),
             refresh_token=creds.get("refresh_token"),
             expires_at_ms=creds.get("expires_at_ms"),
-            base_url=creds.get("base_url") or code_assist_base_url,
+            base_url=auth_mod.DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
         )
         entry = pool.upsert_entry(entry)
         auth_mod.mark_provider_active_if_unset(provider)

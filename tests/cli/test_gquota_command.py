@@ -1,5 +1,6 @@
 import io
 import urllib.error
+import urllib.parse
 from unittest.mock import MagicMock, patch
 
 
@@ -98,6 +99,52 @@ def test_gquota_redacts_canonical_encoded_proxy_paths(monkeypatch, caplog):
         "/private/%22customer", "private/%22customer",
         "/private/\"customer", "private/\"customer",
     )
+    error = urllib.error.HTTPError(
+        f"{custom_base_url}/v1internal:retrieveUserQuota",
+        500,
+        "failed",
+        {},
+        io.BytesIO(" | ".join((*private_variants, access_token)).encode()),
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.console = MagicMock()
+    cli._app = None
+
+    with patch(
+        "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+        return_value={
+            "api_key": access_token,
+            "project_id": "project-1",
+            "base_url": custom_base_url,
+        },
+    ):
+        cli._handle_gquota_command("/gquota")
+
+    rendered = "\n".join((
+        *(str(call) for call in cli.console.print.call_args_list), caplog.text,
+    ))
+    for sensitive in (*private_variants, access_token):
+        assert sensitive not in rendered
+
+
+def test_gquota_redacts_all_deep_encoded_proxy_paths(monkeypatch, caplog):
+    from cli import HermesCLI
+
+    origin = "https://proxy.example.test"
+    path_layers = ['/private/"deep-secret']
+    for _ in range(32):
+        path_layers.append(urllib.parse.quote(path_layers[-1], safe="/"))
+    private_variants = tuple({
+        variant
+        for path in path_layers
+        for variant in (path, path.lstrip("/"), f"{origin}{path}")
+    })
+    custom_base_url = f"{origin}{path_layers[-1]}"
+    access_token = "deep-quota-token"
     error = urllib.error.HTTPError(
         f"{custom_base_url}/v1internal:retrieveUserQuota",
         500,

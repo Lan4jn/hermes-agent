@@ -33,6 +33,19 @@ import httpx
 import pytest
 
 
+def _deep_encoded_proxy_case(depth=32):
+    origin = "https://proxy.example.test"
+    path_layers = ['/private/"deep-secret']
+    for _ in range(depth):
+        path_layers.append(urllib.parse.quote(path_layers[-1], safe="/"))
+    variants = {
+        variant
+        for path in path_layers
+        for variant in (path, path.lstrip("/"), f"{origin}{path}")
+    }
+    return f"{origin}{path_layers[-1]}", tuple(sorted(variants, key=len, reverse=True))
+
+
 @contextlib.contextmanager
 def _code_assist_server(response_body: bytes):
     requests = []
@@ -1257,6 +1270,35 @@ class TestLoadCodeAssist:
             "/private/%22customer", "private/%22customer",
             "/private/\"customer", "private/\"customer",
         )
+        error = urllib.error.HTTPError(
+            f"{custom_base_url}/v1internal:loadCodeAssist",
+            500,
+            "failed",
+            {},
+            io.BytesIO(" | ".join((*private_variants, access_token)).encode()),
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                access_token, base_url=custom_base_url,
+            )
+
+        rendered = f"{exc_info.value!r}\n{caplog.text}"
+        for sensitive in (*private_variants, access_token):
+            assert sensitive not in rendered
+
+    def test_custom_http_error_redacts_all_deep_encoding_layers(
+        self, monkeypatch, caplog,
+    ):
+        from agent import google_code_assist
+
+        access_token = "deep-control-token"
+        custom_base_url, private_variants = _deep_encoded_proxy_case()
         error = urllib.error.HTTPError(
             f"{custom_base_url}/v1internal:loadCodeAssist",
             500,
@@ -2749,6 +2791,50 @@ class TestGeminiCloudCodeClient:
             rendered = "\n".join((
                 str(error), repr(error.details), error.response.text,
                 "".join(traceback.format_exception(error)),
+                repr(classified), classified.message, caplog.text,
+            ))
+            for sensitive in (*private_variants, access_token):
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_deep_encoded_proxy_paths_are_redacted_for_generate_and_stream(
+        self, monkeypatch, caplog, stream,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        private_base, private_variants = _deep_encoded_proxy_case()
+        access_token = "deep-inference-token"
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: access_token,
+        )
+
+        def handler(request):
+            return httpx.Response(429, json={"error": {
+                "message": " | ".join((*private_variants, access_token)),
+                "status": "RESOURCE_EXHAUSTED",
+            }})
+
+        client = GeminiCloudCodeClient(base_url=private_base, project_id="project-1")
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                result = client.chat.completions.create(
+                    model="gemini-test", messages=[], stream=stream,
+                )
+                if stream:
+                    list(result)
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert classified.reason == FailoverReason.rate_limit
+            rendered = "\n".join((
+                str(error), repr(error.details), error.response.text,
                 repr(classified), classified.message, caplog.text,
             ))
             for sensitive in (*private_variants, access_token):

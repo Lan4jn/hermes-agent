@@ -12,6 +12,7 @@ __all__ = [
     "code_assist_sensitive_values",
     "GeminiEndpointConfigError",
     "GeminiOAuthEndpoints",
+    "MAX_ENDPOINT_URL_CHARS",
     "OFFICIAL_CODE_ASSIST_BASE_URL",
     "normalize_code_assist_base_url",
     "resolve_gemini_oauth_endpoints",
@@ -19,6 +20,7 @@ __all__ = [
 
 
 OFFICIAL_CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com"
+MAX_ENDPOINT_URL_CHARS = 4096
 _DEFAULT_ENDPOINTS = {
     "oauth_authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
     "oauth_token_url": "https://oauth2.googleapis.com/token",
@@ -46,6 +48,8 @@ def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, b
         return default, False
     if not isinstance(value, str):
         raise GeminiEndpointConfigError(f"{field}: must be a URL string")
+    if len(value) > MAX_ENDPOINT_URL_CHARS:
+        raise GeminiEndpointConfigError(f"{field}: URL is too long")
     if value != value.strip():
         raise GeminiEndpointConfigError(
             f"{field}: surrounding whitespace is not allowed"
@@ -112,9 +116,9 @@ def code_assist_sensitive_values(base_url: object) -> tuple[str, ...]:
     origin = f"{parsed.scheme}://{parsed.netloc}"
     path_forms = [parsed.path]
     current = parsed.path
-    for _ in range(3):
+    for _ in range(min(len(current), MAX_ENDPOINT_URL_CHARS)):
         decoded = unquote(current)
-        if decoded == current:
+        if decoded == current or len(decoded) >= len(current):
             break
         path_forms.append(decoded)
         current = decoded

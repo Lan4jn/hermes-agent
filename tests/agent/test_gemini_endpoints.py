@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import traceback
 from dataclasses import FrozenInstanceError
+from urllib.parse import quote
 
 import pytest
 
@@ -145,14 +146,37 @@ def test_code_assist_base_rejects_raw_backslash_but_accepts_encoded() -> None:
     ) == "https://proxy.example.test/private/%5Csecret"
 
 
-def test_code_assist_sensitive_decoding_is_bounded_to_three_layers() -> None:
-    values = code_assist_sensitive_values(
-        "https://proxy.example.test/private/%2525252522customer"
-    )
+@pytest.mark.parametrize("depth", [1, 3, 8, 32])
+def test_code_assist_sensitive_decoding_reaches_stable_layer(depth: int) -> None:
+    origin = "https://proxy.example.test"
+    path_layers = ['/private/"customer']
+    for _ in range(depth):
+        path_layers.append(quote(path_layers[-1], safe="/"))
 
-    assert "/private/%2522customer" in values
-    assert "/private/%22customer" not in values
-    assert "/private/\"customer" not in values
+    values = code_assist_sensitive_values(f"{origin}{path_layers[-1]}")
+
+    for path in path_layers:
+        assert path in values
+        assert path.lstrip("/") in values
+        assert f"{origin}{path}" in values
+    assert [len(value) for value in values] == sorted(
+        (len(value) for value in values), reverse=True,
+    )
+    assert len(values) <= 3 * len(f"{origin}{path_layers[-1]}")
+
+
+def test_endpoint_url_length_limit_rejects_without_echoing_url() -> None:
+    from agent import gemini_endpoints
+
+    prefix = "https://proxy.example.test/"
+    limit = gemini_endpoints.MAX_ENDPOINT_URL_CHARS
+    allowed = prefix + "a" * (limit - len(prefix))
+    rejected = allowed + "secret-tail"
+
+    assert normalize_code_assist_base_url(allowed) == allowed
+    with pytest.raises(GeminiEndpointConfigError) as exc_info:
+        normalize_code_assist_base_url(rejected)
+    assert rejected not in str(exc_info.value)
 
 
 def test_single_segment_sensitive_paths_include_slashless_canonical_forms() -> None:
@@ -449,6 +473,7 @@ def test_public_exports_are_explicit() -> None:
         "code_assist_sensitive_values",
         "GeminiEndpointConfigError",
         "GeminiOAuthEndpoints",
+        "MAX_ENDPOINT_URL_CHARS",
         "OFFICIAL_CODE_ASSIST_BASE_URL",
         "normalize_code_assist_base_url",
         "resolve_gemini_oauth_endpoints",

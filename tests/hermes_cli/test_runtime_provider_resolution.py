@@ -86,6 +86,28 @@ def test_resolve_runtime_provider_uses_credential_pool(monkeypatch):
     assert resolved["source"] == "manual"
 
 
+def test_non_google_pool_entry_keeps_its_base_url(monkeypatch):
+    entry = rp.PooledCredential(
+        provider="deepseek",
+        id="deepseek-1",
+        label="deepseek",
+        auth_type="api_key",
+        priority=0,
+        source="manual",
+        access_token="deepseek-token",
+        base_url="https://relay.example.test/deepseek/v1",
+    )
+
+    resolved = rp._resolve_runtime_from_pool_entry(
+        provider="deepseek",
+        entry=entry,
+        requested_provider="deepseek",
+        model_cfg={"provider": "deepseek", "default": "deepseek-chat"},
+    )
+
+    assert resolved["base_url"] == "https://relay.example.test/deepseek/v1"
+
+
 class TestCustomProviderPoolLoopbackNoKeyExemption:
     """Regression for issue #86864: legacy custom_providers configs often
     used short/placeholder api_keys ('123', 'm') for local no-auth
