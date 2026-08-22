@@ -34,6 +34,7 @@ import time
 import uuid
 from types import SimpleNamespace
 from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -635,6 +636,13 @@ class GeminiCloudCodeClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+    def _error_sensitive_values(self, access_token: str) -> tuple[str, ...]:
+        values = [self.base_url, access_token]
+        endpoint_path = urlsplit(self.base_url).path.rstrip("/")
+        if endpoint_path and endpoint_path != "/":
+            values.extend((endpoint_path, endpoint_path.lstrip("/")))
+        return tuple(values)
+
     def _ensure_project_context(self, access_token: str, model: str) -> ProjectContext:
         """Lazily resolve and cache the project context for this client."""
         if self._project_context is not None:
@@ -737,7 +745,8 @@ class GeminiCloudCodeClient:
             ) from None
         if response.status_code != 200:
             raise _gemini_http_error(
-                response, sensitive_values=(self.base_url, access_token)
+                response,
+                sensitive_values=self._error_sensitive_values(access_token),
             )
         try:
             payload = response.json()
@@ -777,8 +786,7 @@ class GeminiCloudCodeClient:
                             response.read()
                             raise _gemini_http_error(
                                 response,
-                                sensitive_values=(
-                                    self.base_url,
+                                sensitive_values=self._error_sensitive_values(
                                     stream_headers["Authorization"].removeprefix(
                                         "Bearer "
                                     ),

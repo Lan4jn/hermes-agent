@@ -22,6 +22,7 @@ import logging
 import stat
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 from pathlib import Path
@@ -2439,6 +2440,110 @@ class TestGeminiCloudCodeClient:
             rendered = str(exc_info.value)
             assert private_base not in rendered
             assert access_token not in rendered
+        finally:
+            client.close()
+
+    @pytest.mark.parametrize(
+        "echoed_path", ["/private/customer-path", "private/customer-path"],
+    )
+    def test_http_error_redacts_proxy_path_fragments(
+        self, monkeypatch, caplog, echoed_path,
+    ):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        private_base = "https://proxy.example.test/private/customer-path"
+        access_token = "secret-access-token"
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: access_token,
+        )
+
+        def handler(request):
+            return httpx.Response(500, json={
+                "error": {
+                    "message": f"upstream path={echoed_path} token={access_token}",
+                    "status": "INTERNAL",
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": echoed_path,
+                    }],
+                }
+            })
+
+        client = GeminiCloudCodeClient(base_url=private_base, project_id="project-1")
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            rendered = "\n".join((
+                str(exc_info.value),
+                repr(exc_info.value.details),
+                "".join(traceback.format_exception(exc_info.value)),
+                caplog.text,
+            ))
+            for sensitive in (
+                private_base,
+                "/private/customer-path",
+                "private/customer-path",
+                access_token,
+            ):
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
+    @pytest.mark.parametrize("late_error_kind", ["http", "code_assist_401"])
+    def test_stream_error_after_first_chunk_never_refreshes_or_replays(
+        self, monkeypatch, late_error_kind,
+    ):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        refresh_calls = []
+        stream_calls = []
+
+        def token(*, force_refresh=False):
+            if force_refresh:
+                refresh_calls.append(True)
+            return "access-token"
+
+        monkeypatch.setattr("agent.google_oauth.get_valid_access_token", token)
+
+        def handler(request):
+            stream_calls.append(str(request.url))
+            return httpx.Response(200, text="unused")
+
+        def events(response):
+            yield {
+                "response": {
+                    "candidates": [{"content": {"parts": [{"text": "first"}]}}]
+                }
+            }
+            if late_error_kind == "http":
+                raise httpx.ReadError("late stream failure", request=response.request)
+            raise CodeAssistError(
+                "late unauthorized", code="code_assist_unauthorized", status_code=401,
+            )
+
+        monkeypatch.setattr(
+            "agent.gemini_cloudcode_adapter._iter_sse_events", events,
+        )
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/private/code", project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            stream = client.chat.completions.create(
+                model="gemini-test", messages=[], stream=True,
+            )
+            assert next(stream).choices[0].delta.content == "first"
+            with pytest.raises(CodeAssistError):
+                next(stream)
+            assert refresh_calls == []
+            assert stream_calls == [
+                "https://proxy.example.test/private/code/v1internal:streamGenerateContent?alt=sse"
+            ]
         finally:
             client.close()
 
