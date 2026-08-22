@@ -149,12 +149,18 @@ def _post_json(
             if not raw:
                 return {}
             try:
-                return json.loads(raw)
+                parsed = json.loads(raw)
             except (json.JSONDecodeError, ValueError):
                 raise CodeAssistError(
                     "Code Assist returned an invalid JSON response",
                     code="code_assist_invalid_response",
                 ) from None
+            if not isinstance(parsed, dict):
+                raise CodeAssistError(
+                    "Code Assist returned an invalid JSON response",
+                    code="code_assist_invalid_response",
+                ) from None
+            return parsed
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
@@ -246,7 +252,7 @@ def load_code_assist(
             return _parse_load_response(resp)
         except CodeAssistError as exc:
             if exc.code == "code_assist_vpc_sc":
-                logger.info("VPC-SC violation on %s — defaulting to standard-tier", endpoint)
+                logger.info("VPC-SC violation; defaulting to standard-tier")
                 return CodeAssistProjectInfo(
                     current_tier_id=STANDARD_TIER_ID,
                     cloudaicompanion_project=project_id,

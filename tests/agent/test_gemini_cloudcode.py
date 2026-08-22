@@ -1153,10 +1153,14 @@ class TestLoadCodeAssist:
             ],
         ]
 
-    def test_custom_vpc_sc_error_does_not_reach_official_endpoint(self, monkeypatch):
+    def test_custom_vpc_sc_error_does_not_reach_or_log_endpoint(
+        self, monkeypatch, caplog,
+    ):
         from agent import google_code_assist
 
         calls = []
+        custom_base_url = "https://proxy.test/private/root"
+        caplog.set_level(logging.INFO, logger=google_code_assist.__name__)
 
         def boom(url, *args, **kwargs):
             calls.append(url)
@@ -1167,11 +1171,13 @@ class TestLoadCodeAssist:
         monkeypatch.setattr(google_code_assist, "_post_json", boom)
 
         info = google_code_assist.load_code_assist(
-            "access-token", project_id="corp-proj", base_url="https://proxy.test/",
+            "access-token", project_id="corp-proj", base_url=custom_base_url,
         )
 
         assert info.current_tier_id == "standard-tier"
-        assert calls == ["https://proxy.test/v1internal:loadCodeAssist"]
+        assert calls == [f"{custom_base_url}/v1internal:loadCodeAssist"]
+        assert custom_base_url not in caplog.text
+        assert calls[0] not in caplog.text
 
     def test_http_error_does_not_expose_access_token(self, monkeypatch, caplog):
         from agent import google_code_assist
@@ -1320,6 +1326,31 @@ class TestCodeAssistHttpPrimitive:
         assert secret not in repr(exc_info.value)
         assert "https://proxy.example.test/private" not in repr(exc_info.value)
 
+    @pytest.mark.parametrize("response_body", [b"[]", b'"ok"', b"123", b"null"])
+    def test_mock_non_object_json_is_a_safe_structured_error(
+        self, monkeypatch, caplog, response_body,
+    ):
+        from agent import google_code_assist
+
+        custom_base_url = "https://proxy.example.test/private-root"
+        response = self.FakeResponse(response_body)
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: response,
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                "access-token", base_url=custom_base_url,
+            )
+
+        exposed = f"{exc_info.value!r}\n{exc_info.value.__cause__!r}\n{caplog.text}"
+        assert exc_info.value.code == "code_assist_invalid_response"
+        assert exc_info.value.__cause__ is None
+        assert response_body.decode() not in exposed
+        assert custom_base_url not in exposed
+
     @pytest.mark.parametrize(
         "transport_error",
         [
@@ -1376,6 +1407,26 @@ class TestCodeAssistHttpPrimitive:
                 google_code_assist.load_code_assist("at", base_url=base_url)
 
         assert exc_info.value.code == "code_assist_response_too_large"
+        assert not thread.is_alive()
+
+    @pytest.mark.parametrize("response_body", [b"[]", b'"ok"', b"123", b"null"])
+    def test_loopback_non_object_json_is_rejected_and_server_stops(
+        self, caplog, response_body,
+    ):
+        from agent import google_code_assist
+
+        with _code_assist_server(response_body) as (base_url, _, thread):
+            custom_base_url = f"{base_url}/private-root"
+            with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+                google_code_assist.load_code_assist(
+                    "access-token", base_url=custom_base_url,
+                )
+
+        exposed = f"{exc_info.value!r}\n{exc_info.value.__cause__!r}\n{caplog.text}"
+        assert exc_info.value.code == "code_assist_invalid_response"
+        assert exc_info.value.__cause__ is None
+        assert response_body.decode() not in exposed
+        assert custom_base_url not in exposed
         assert not thread.is_alive()
 
 
