@@ -9,9 +9,11 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 __all__ = [
+    "code_assist_sensitive_values",
     "GeminiEndpointConfigError",
     "GeminiOAuthEndpoints",
     "OFFICIAL_CODE_ASSIST_BASE_URL",
+    "normalize_code_assist_base_url",
     "resolve_gemini_oauth_endpoints",
 ]
 
@@ -94,6 +96,23 @@ def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, b
     return normalized, True
 
 
+def normalize_code_assist_base_url(
+    value: object, field: str = "code_assist_base_url",
+) -> str:
+    """Validate and normalize a Code Assist network base URL."""
+    return _normalize_endpoint(field, value, OFFICIAL_CODE_ASSIST_BASE_URL)[0]
+
+
+def code_assist_sensitive_values(base_url: object) -> tuple[str, ...]:
+    """Return endpoint values that must be removed from errors and logs."""
+    normalized = normalize_code_assist_base_url(base_url)
+    values = [normalized]
+    endpoint_path = urlsplit(normalized).path
+    if endpoint_path and endpoint_path != "/":
+        values.extend((endpoint_path, endpoint_path.lstrip("/")))
+    return tuple(dict.fromkeys(value for value in values if value and value != "/"))
+
+
 def resolve_gemini_oauth_endpoints(
     config: Mapping[str, Any] | None = None,
 ) -> GeminiOAuthEndpoints:
@@ -113,9 +132,14 @@ def resolve_gemini_oauth_endpoints(
     resolved: dict[str, str] = {}
     explicit: dict[str, bool] = {}
     for field, default in _DEFAULT_ENDPOINTS.items():
-        resolved[field], explicit[field] = _normalize_endpoint(
-            field, provider_config.get(field), default
-        )
+        value = provider_config.get(field)
+        if field == "code_assist_base_url":
+            resolved[field] = normalize_code_assist_base_url(value)
+            explicit[field] = value is not None and value != ""
+        else:
+            resolved[field], explicit[field] = _normalize_endpoint(
+                field, value, default
+            )
 
     return GeminiOAuthEndpoints(
         **resolved,

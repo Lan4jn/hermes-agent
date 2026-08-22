@@ -7,9 +7,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from agent.gemini_endpoints import (
+    code_assist_sensitive_values,
     GeminiEndpointConfigError,
     GeminiOAuthEndpoints,
     OFFICIAL_CODE_ASSIST_BASE_URL,
+    normalize_code_assist_base_url,
     resolve_gemini_oauth_endpoints,
 )
 
@@ -37,6 +39,41 @@ def test_official_defaults_are_frozen() -> None:
 
 def test_official_code_assist_base_url_is_public() -> None:
     assert OFFICIAL_CODE_ASSIST_BASE_URL == DEFAULTS.code_assist_base_url
+
+
+def test_public_code_assist_normalizer_reuses_endpoint_rules() -> None:
+    assert normalize_code_assist_base_url(
+        "https://proxy.example.test/private/code///"
+    ) == "https://proxy.example.test/private/code"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ftp://proxy.example.test/private/code",
+        "https://user:secret@proxy.example.test/private/code",
+        "https://proxy.example.test/private/code?token=secret",
+        "https://proxy.example.test/private/code#secret",
+        "http://proxy.example.test/private/code",
+        "https://proxy.example.test/private/\x00code",
+    ],
+)
+def test_public_code_assist_normalizer_rejects_unsafe_values(value: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError, match="code_assist_base_url"):
+        normalize_code_assist_base_url(value)
+
+
+def test_code_assist_sensitive_values_include_fullbase_and_nonroot_path() -> None:
+    assert code_assist_sensitive_values(
+        "https://proxy.example.test/private/customer-path"
+    ) == (
+        "https://proxy.example.test/private/customer-path",
+        "/private/customer-path",
+        "private/customer-path",
+    )
+    assert code_assist_sensitive_values("https://proxy.example.test/") == (
+        "https://proxy.example.test",
+    )
 
 
 @pytest.mark.parametrize(
@@ -307,9 +344,11 @@ def test_public_exports_are_explicit() -> None:
     from agent import gemini_endpoints
 
     required_exports = {
+        "code_assist_sensitive_values",
         "GeminiEndpointConfigError",
         "GeminiOAuthEndpoints",
         "OFFICIAL_CODE_ASSIST_BASE_URL",
+        "normalize_code_assist_base_url",
         "resolve_gemini_oauth_endpoints",
     }
 

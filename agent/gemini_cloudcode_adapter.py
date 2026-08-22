@@ -30,16 +30,21 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from types import SimpleNamespace
 from typing import Any, Dict, Iterator, List, Optional
-from urllib.parse import urlsplit
 
 import httpx
 
 from agent import google_oauth
-from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+from agent.gemini_endpoints import (
+    OFFICIAL_CODE_ASSIST_BASE_URL,
+    code_assist_sensitive_values,
+    normalize_code_assist_base_url,
+    resolve_gemini_oauth_endpoints,
+)
 from agent.gemini_schema import sanitize_gemini_tool_parameters
 from agent.google_code_assist import (
     CodeAssistError,
@@ -611,13 +616,16 @@ class GeminiCloudCodeClient:
         # fetched on every call via agent.google_oauth.get_valid_access_token().
         # We accept the kwarg for openai.OpenAI interface parity.
         self.api_key = api_key or "google-oauth"
-        if not base_url or base_url == MARKER_BASE_URL:
+        if base_url is None or base_url == "" or (
+            isinstance(base_url, str) and base_url.rstrip("/") == MARKER_BASE_URL
+        ):
             base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_code_assist_base_url(base_url)
+        self._custom_endpoint = self.base_url != OFFICIAL_CODE_ASSIST_BASE_URL
         self._default_headers = dict(default_headers or {})
         self._configured_project_id = project_id
         self._project_context: Optional[ProjectContext] = None
-        self._project_context_lock = False  # simple single-thread guard
+        self._project_context_lock = threading.Lock()
         self.chat = _GeminiChatNamespace(self)
         self.is_closed = False
         self._http = httpx.Client(timeout=httpx.Timeout(connect=15.0, read=600.0, write=30.0, pool=30.0))
@@ -637,47 +645,44 @@ class GeminiCloudCodeClient:
         self.close()
 
     def _error_sensitive_values(self, access_token: str) -> tuple[str, ...]:
-        values = [self.base_url, access_token]
-        endpoint_path = urlsplit(self.base_url).path.rstrip("/")
-        if endpoint_path and endpoint_path != "/":
-            values.extend((endpoint_path, endpoint_path.lstrip("/")))
-        return tuple(values)
+        return (*code_assist_sensitive_values(self.base_url), access_token)
 
     def _ensure_project_context(self, access_token: str, model: str) -> ProjectContext:
         """Lazily resolve and cache the project context for this client."""
         if self._project_context is not None:
             return self._project_context
 
-        env_project = google_oauth.resolve_project_id_from_env()
-        creds = google_oauth.load_credentials()
-        stored_project = creds.project_id if creds else ""
+        with self._project_context_lock:
+            if self._project_context is not None:
+                return self._project_context
 
-        # Prefer what's already baked into the creds
-        if stored_project:
-            self._project_context = ProjectContext(
-                project_id=stored_project,
-                managed_project_id=creds.managed_project_id if creds else "",
-                tier_id="",
-                source="stored",
-            )
-            return self._project_context
+            env_project = google_oauth.resolve_project_id_from_env()
+            creds = google_oauth.load_credentials()
+            stored_project = creds.project_id if creds else ""
 
-        ctx = resolve_project_context(
-            access_token,
-            configured_project_id=self._configured_project_id,
-            env_project_id=env_project,
-            user_agent_model=model,
-            code_assist_base_url=self.base_url,
-        )
-        # Persist discovered project back to the creds file so the next
-        # session doesn't re-run the discovery.
-        if ctx.project_id or ctx.managed_project_id:
-            google_oauth.update_project_ids(
-                project_id=ctx.project_id,
-                managed_project_id=ctx.managed_project_id,
+            if stored_project:
+                self._project_context = ProjectContext(
+                    project_id=stored_project,
+                    managed_project_id=creds.managed_project_id if creds else "",
+                    tier_id="",
+                    source="stored",
+                )
+                return self._project_context
+
+            ctx = resolve_project_context(
+                access_token,
+                configured_project_id=self._configured_project_id,
+                env_project_id=env_project,
+                user_agent_model=model,
+                code_assist_base_url=self.base_url,
             )
-        self._project_context = ctx
-        return ctx
+            if ctx.project_id or ctx.managed_project_id:
+                google_oauth.update_project_ids(
+                    project_id=ctx.project_id,
+                    managed_project_id=ctx.managed_project_id,
+                )
+            self._project_context = ctx
+            return ctx
 
     def _create_chat_completion(
         self,
@@ -747,6 +752,7 @@ class GeminiCloudCodeClient:
             raise _gemini_http_error(
                 response,
                 sensitive_values=self._error_sensitive_values(access_token),
+                custom_endpoint=self._custom_endpoint,
             )
         try:
             payload = response.json()
@@ -791,6 +797,7 @@ class GeminiCloudCodeClient:
                                         "Bearer "
                                     ),
                                 ),
+                                custom_endpoint=self._custom_endpoint,
                             )
                         tool_call_counter: List[int] = [0]
                         for event in _iter_sse_events(response):
@@ -809,7 +816,10 @@ class GeminiCloudCodeClient:
 
 
 def _gemini_http_error(
-    response: httpx.Response, *, sensitive_values: tuple[str, ...] = ()
+    response: httpx.Response,
+    *,
+    sensitive_values: tuple[str, ...] = (),
+    custom_endpoint: bool = False,
 ) -> CodeAssistError:
     """Translate an httpx response into a CodeAssistError with rich metadata.
 
@@ -934,13 +944,18 @@ def _gemini_http_error(
         if retry_delay_seconds is not None:
             message += f" Retry suggested in {retry_delay_seconds:g}s."
     elif status == 404:
-        # Google returns 404 when a model has been retired or renamed.
         target = model_hint or (err_message or "model")
-        message = (
-            f"Code Assist 404: {target} is not available at "
-            f"cloudcode-pa.googleapis.com. It may have been renamed or "
-            f"retired. Check hermes_cli/models.py for the current list."
+        endpoint_name = (
+            "the configured Code Assist endpoint"
+            if custom_endpoint
+            else "cloudcode-pa.googleapis.com"
         )
+        message = f"Code Assist 404: {target} is not available at {endpoint_name}."
+        if not custom_endpoint:
+            message += (
+                " It may have been renamed or retired. "
+                "Check hermes_cli/models.py for the current list."
+            )
     elif err_message:
         # Generic fallback with the parsed message.
         message = f"Code Assist HTTP {status} ({err_status or 'error'}): {err_message}"
@@ -948,11 +963,22 @@ def _gemini_http_error(
         # Last-ditch fallback — raw body snippet.
         message = f"Code Assist returned HTTP {status}: {body_text[:500]}"
 
+    safe_headers = {"Content-Type": "application/json"}
+    if retry_delay_seconds is not None:
+        safe_headers["Retry-After"] = f"{retry_delay_seconds:g}"
+    safe_body = body_json or {"error": {"message": "Code Assist request failed"}}
+    safe_response = httpx.Response(
+        status,
+        headers=safe_headers,
+        json=safe_body,
+        request=httpx.Request("POST", "https://redacted.invalid"),
+    )
+
     return CodeAssistError(
         message,
         code=code,
         status_code=status,
-        response=response,
+        response=safe_response,
         retry_after=retry_delay_seconds,
         details={
             "status": err_status,

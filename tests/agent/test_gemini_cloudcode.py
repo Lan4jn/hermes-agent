@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import contextlib
 import hashlib
 import http.server
@@ -1207,6 +1208,40 @@ class TestLoadCodeAssist:
         assert access_token not in str(exc_info.value)
         assert access_token not in caplog.text
 
+    def test_custom_http_error_redacts_fullbase_and_path_fragments(
+        self, monkeypatch, caplog,
+    ):
+        from agent import google_code_assist
+
+        access_token = "secret-access-token"
+        custom_base_url = "https://proxy.example.test/private/customer-path"
+        private_path = "/private/customer-path"
+        error = urllib.error.HTTPError(
+            f"{custom_base_url}/v1internal:loadCodeAssist",
+            500,
+            "failed",
+            {},
+            io.BytesIO(
+                f"backend path={private_path} token={access_token}".encode()
+            ),
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                access_token, base_url=custom_base_url,
+            )
+
+        rendered = f"{exc_info.value!r}\n{caplog.text}"
+        for sensitive in (
+            access_token, custom_base_url, private_path, private_path.lstrip("/"),
+        ):
+            assert sensitive not in rendered
+
     def test_empty_http_error_redacts_reason_and_drops_sensitive_cause(
         self, monkeypatch, caplog,
     ):
@@ -2208,6 +2243,45 @@ class TestGeminiCloudCodeClient:
         finally:
             client.close()
 
+    def test_resolves_marker_with_trailing_slash(self, monkeypatch):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.gemini_endpoints import GeminiOAuthEndpoints
+
+        monkeypatch.setattr(
+            "agent.gemini_cloudcode_adapter.resolve_gemini_oauth_endpoints",
+            lambda: GeminiOAuthEndpoints(
+                oauth_authorize_url="https://auth.example.test/authorize",
+                oauth_token_url="https://auth.example.test/token",
+                oauth_userinfo_url="https://auth.example.test/userinfo",
+                code_assist_base_url="https://proxy.example.test/private/code",
+                custom_code_assist=True,
+            ),
+        )
+        client = GeminiCloudCodeClient(base_url="cloudcode-pa://google/")
+        try:
+            assert client.base_url == "https://proxy.example.test/private/code"
+        finally:
+            client.close()
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "ftp://proxy.example.test/private/code",
+            "https://user:secret@proxy.example.test/private/code",
+            "https://proxy.example.test/private/code?token=secret",
+            "https://proxy.example.test/private/code#secret",
+            "http://proxy.example.test/private/code",
+            "https://proxy.example.test/private/\x00code",
+            0,
+        ],
+    )
+    def test_explicit_base_rejects_unsafe_urls(self, base_url):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.gemini_endpoints import GeminiEndpointConfigError
+
+        with pytest.raises(GeminiEndpointConfigError):
+            GeminiCloudCodeClient(base_url=base_url)
+
     def test_explicit_network_base_is_normalized(self):
         from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
 
@@ -2277,6 +2351,69 @@ class TestGeminiCloudCodeClient:
             assert requests == [
                 "https://proxy.example.test/private/code/v1internal:generateContent"
             ]
+        finally:
+            client.close()
+
+    def test_project_context_resolution_is_single_flight(self, monkeypatch):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import ProjectContext
+
+        calls = []
+        calls_lock = threading.Lock()
+        start = threading.Barrier(2)
+        monkeypatch.setattr("agent.google_oauth.resolve_project_id_from_env", lambda: "")
+        monkeypatch.setattr("agent.google_oauth.load_credentials", lambda: None)
+        monkeypatch.setattr("agent.google_oauth.update_project_ids", lambda **_: None)
+
+        def resolve_project(*args, **kwargs):
+            with calls_lock:
+                calls.append(kwargs["code_assist_base_url"])
+            time.sleep(0.1)
+            return ProjectContext(project_id="project-1")
+
+        monkeypatch.setattr(
+            "agent.gemini_cloudcode_adapter.resolve_project_context", resolve_project,
+        )
+        client = GeminiCloudCodeClient(base_url="https://proxy.example.test/code")
+
+        def resolve():
+            start.wait()
+            return client._ensure_project_context("token", "gemini-test")
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                contexts = list(executor.map(lambda _: resolve(), range(2)))
+            assert [ctx.project_id for ctx in contexts] == ["project-1", "project-1"]
+            assert calls == ["https://proxy.example.test/code"]
+        finally:
+            client.close()
+
+    def test_project_context_lock_releases_after_resolution_error(self, monkeypatch):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError, ProjectContext
+
+        calls = []
+        monkeypatch.setattr("agent.google_oauth.resolve_project_id_from_env", lambda: "")
+        monkeypatch.setattr("agent.google_oauth.load_credentials", lambda: None)
+        monkeypatch.setattr("agent.google_oauth.update_project_ids", lambda **_: None)
+
+        def resolve_project(*args, **kwargs):
+            calls.append(kwargs["code_assist_base_url"])
+            if len(calls) == 1:
+                raise CodeAssistError("temporary failure")
+            return ProjectContext(project_id="project-1")
+
+        monkeypatch.setattr(
+            "agent.gemini_cloudcode_adapter.resolve_project_context", resolve_project,
+        )
+        client = GeminiCloudCodeClient(base_url="https://proxy.example.test/code")
+        try:
+            with pytest.raises(CodeAssistError):
+                client._ensure_project_context("token", "gemini-test")
+            assert client._ensure_project_context(
+                "token", "gemini-test"
+            ).project_id == "project-1"
+            assert len(calls) == 2
         finally:
             client.close()
 
@@ -2440,6 +2577,89 @@ class TestGeminiCloudCodeClient:
             rendered = str(exc_info.value)
             assert private_base not in rendered
             assert access_token not in rendered
+        finally:
+            client.close()
+
+    def test_custom_rate_limit_error_uses_synthetic_safe_response(
+        self, monkeypatch, caplog,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        private_base = "https://proxy.example.test/private/customer-path"
+        private_path = "/private/customer-path"
+        access_token = "secret-access-token"
+        original_responses = []
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: access_token,
+        )
+
+        def handler(request):
+            response = httpx.Response(
+                429,
+                headers={"Retry-After": "17", "Content-Type": "application/json"},
+                json={"error": {
+                    "message": f"rate limit at {private_path} token={access_token}",
+                    "status": "RESOURCE_EXHAUSTED",
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": private_path,
+                    }],
+                }},
+            )
+            original_responses.append(response)
+            return response
+
+        client = GeminiCloudCodeClient(base_url=private_base, project_id="project-1")
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert error.response is not None
+            assert error.response is not original_responses[0]
+            assert error.response.status_code == 429
+            assert str(error.response.request.url) == "https://redacted.invalid"
+            assert error.response.headers["Retry-After"] == "17"
+            assert classified.status_code == 429
+            assert classified.reason == FailoverReason.rate_limit
+            rendered = "\n".join((
+                str(error), repr(error.details), error.response.text,
+                repr(classified), classified.message, caplog.text,
+            ))
+            for sensitive in (private_base, private_path, private_path.lstrip("/"), access_token):
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
+    def test_custom_404_names_configured_endpoint(self, monkeypatch):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: "token",
+        )
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/private/code", project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(404, json={
+                "error": {"message": "model missing", "status": "NOT_FOUND"}
+            })
+        ))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            message = str(exc_info.value)
+            assert "configured Code Assist endpoint" in message
+            assert "cloudcode-pa.googleapis.com" not in message
+            assert "/private/code" not in message
         finally:
             client.close()
 

@@ -33,7 +33,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from agent.gemini_endpoints import OFFICIAL_CODE_ASSIST_BASE_URL
+from agent.gemini_endpoints import (
+    OFFICIAL_CODE_ASSIST_BASE_URL,
+    code_assist_sensitive_values,
+    normalize_code_assist_base_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +110,14 @@ def _build_headers(access_token: str, *, user_agent_model: str = "") -> Dict[str
     }
 
 
-def _redact_access_token(value: object, access_token: str) -> str:
+def _redact_sensitive_values(
+    value: object, access_token: str, sensitive_values: tuple[str, ...],
+) -> str:
     text = str(value)
-    return text.replace(access_token, "<redacted>") if access_token else text
+    for sensitive in (access_token, *sensitive_values):
+        if sensitive:
+            text = text.replace(sensitive, "<redacted>")
+    return text
 
 
 def _client_metadata() -> Dict[str, str]:
@@ -137,6 +146,7 @@ def _post_json(
     *,
     timeout: float = _DEFAULT_REQUEST_TIMEOUT,
     user_agent_model: str = "",
+    sensitive_values: tuple[str, ...] = (),
 ) -> Dict[str, Any]:
     data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
@@ -169,7 +179,9 @@ def _post_json(
             raise read_error from None
         except Exception:
             pass
-        safe_detail = _redact_access_token(detail, access_token)
+        safe_detail = _redact_sensitive_values(
+            detail, access_token, sensitive_values
+        )
         if _is_vpc_sc_violation(detail):
             raise CodeAssistError(
                 f"VPC-SC policy violation: {safe_detail}",
@@ -238,7 +250,7 @@ def load_code_assist(
     if project_id:
         body["cloudaicompanionProject"] = project_id
 
-    root = base_url.rstrip("/")
+    root = normalize_code_assist_base_url(base_url)
     endpoints = (
         [root, *FALLBACK_ENDPOINTS]
         if root == CODE_ASSIST_ENDPOINT
@@ -248,7 +260,13 @@ def load_code_assist(
     for endpoint in endpoints:
         url = f"{endpoint}/v1internal:loadCodeAssist"
         try:
-            resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
+            resp = _post_json(
+                url,
+                body,
+                access_token,
+                user_agent_model=user_agent_model,
+                sensitive_values=code_assist_sensitive_values(endpoint),
+            )
             return _parse_load_response(resp)
         except CodeAssistError as exc:
             if exc.code == "code_assist_vpc_sc":
@@ -328,9 +346,16 @@ def onboard_user(
     if project_id:
         body["cloudaicompanionProject"] = project_id
 
-    root = base_url.rstrip("/")
+    root = normalize_code_assist_base_url(base_url)
+    sensitive_values = code_assist_sensitive_values(root)
     url = f"{root}/v1internal:onboardUser"
-    resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
+    resp = _post_json(
+        url,
+        body,
+        access_token,
+        user_agent_model=user_agent_model,
+        sensitive_values=sensitive_values,
+    )
     _raise_if_onboarding_failed(resp)
 
     if not resp.get("done"):
@@ -340,7 +365,13 @@ def onboard_user(
             time.sleep(_ONBOARDING_POLL_INTERVAL_SECONDS)
             poll_url = f"{root}/v1internal/{op_name}"
             try:
-                poll_resp = _post_json(poll_url, {}, access_token, user_agent_model=user_agent_model)
+                poll_resp = _post_json(
+                    poll_url,
+                    {},
+                    access_token,
+                    user_agent_model=user_agent_model,
+                    sensitive_values=sensitive_values,
+                )
             except CodeAssistError as exc:
                 logger.warning("Onboarding poll attempt %d failed: %s", attempt + 1, exc)
                 continue
@@ -378,9 +409,15 @@ def retrieve_user_quota(
     body: Dict[str, Any] = {}
     if project_id:
         body["project"] = project_id
-    root = base_url.rstrip("/")
+    root = normalize_code_assist_base_url(base_url)
     url = f"{root}/v1internal:retrieveUserQuota"
-    resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
+    resp = _post_json(
+        url,
+        body,
+        access_token,
+        user_agent_model=user_agent_model,
+        sensitive_values=code_assist_sensitive_values(root),
+    )
     raw_buckets = resp.get("buckets") or []
     buckets: List[QuotaBucket] = []
     if not isinstance(raw_buckets, list):
