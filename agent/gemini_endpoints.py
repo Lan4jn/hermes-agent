@@ -42,8 +42,14 @@ def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, b
     if not isinstance(value, str):
         raise GeminiEndpointConfigError(f"{field}: must be a URL string")
 
+    candidate = value.strip()
+    if "?" in candidate:
+        raise GeminiEndpointConfigError(f"{field}: query strings are not allowed")
+    if "#" in candidate:
+        raise GeminiEndpointConfigError(f"{field}: fragments are not allowed")
+
     try:
-        parsed = urlsplit(value.strip())
+        parsed = urlsplit(candidate)
         hostname = parsed.hostname
         parsed.port  # Validate malformed and out-of-range ports.
     except ValueError:

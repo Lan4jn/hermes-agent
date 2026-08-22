@@ -34,23 +34,29 @@ def test_official_defaults_are_frozen() -> None:
         endpoints.oauth_token_url = "https://example.test/token"  # type: ignore[misc]
 
 
-def test_each_endpoint_can_be_configured_independently() -> None:
-    endpoints = resolve_gemini_oauth_endpoints(
-        _config(
-            oauth_authorize_url="https://auth.example.test/authorize",
-            oauth_token_url="https://auth.example.test/token",
-            oauth_userinfo_url="https://api.example.test/me",
-            code_assist_base_url="https://code.example.test/api",
-        )
-    )
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("oauth_authorize_url", "https://auth.example.test/authorize"),
+        ("oauth_token_url", "https://auth.example.test/token"),
+        ("oauth_userinfo_url", "https://api.example.test/me"),
+        ("code_assist_base_url", "https://code.example.test/api"),
+    ],
+)
+def test_each_endpoint_can_be_configured_independently(
+    field: str, value: str
+) -> None:
+    endpoints = resolve_gemini_oauth_endpoints(_config(**{field: value}))
 
-    assert endpoints == GeminiOAuthEndpoints(
-        oauth_authorize_url="https://auth.example.test/authorize",
-        oauth_token_url="https://auth.example.test/token",
-        oauth_userinfo_url="https://api.example.test/me",
-        code_assist_base_url="https://code.example.test/api",
-        custom_code_assist=True,
-    )
+    for endpoint_field in (
+        "oauth_authorize_url",
+        "oauth_token_url",
+        "oauth_userinfo_url",
+        "code_assist_base_url",
+    ):
+        expected = value if endpoint_field == field else getattr(DEFAULTS, endpoint_field)
+        assert getattr(endpoints, endpoint_field) == expected
+    assert endpoints.custom_code_assist is (field == "code_assist_base_url")
 
 
 def test_trailing_slashes_are_removed_without_corrupting_root_urls() -> None:
@@ -77,6 +83,11 @@ def test_non_mapping_google_gemini_cli_config_uses_defaults(
     config = {"providers": {"google-gemini-cli": provider_config}}
 
     assert resolve_gemini_oauth_endpoints(config) == DEFAULTS
+
+
+@pytest.mark.parametrize("providers", [None, [], "invalid"])
+def test_non_mapping_providers_block_uses_defaults(providers: object) -> None:
+    assert resolve_gemini_oauth_endpoints({"providers": providers}) == DEFAULTS
 
 
 def test_empty_endpoint_values_use_independent_defaults() -> None:
@@ -107,6 +118,20 @@ def test_empty_endpoint_values_use_independent_defaults() -> None:
 def test_invalid_endpoint_matrix_is_rejected(field: str, url: str) -> None:
     with pytest.raises(GeminiEndpointConfigError, match=field):
         resolve_gemini_oauth_endpoints(_config(**{field: url}))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.test/token?",
+        "https://example.test/token#",
+    ],
+)
+def test_empty_query_or_fragment_delimiters_are_rejected(url: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    assert url not in str(caught.value)
 
 
 @pytest.mark.parametrize(
