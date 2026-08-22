@@ -1040,6 +1040,15 @@ class TestCodeAssistVpcScDetection:
 
 
 class TestLoadCodeAssist:
+    def test_code_assist_endpoint_remains_official_compatibility_alias(self):
+        from agent import google_code_assist
+        from agent.gemini_endpoints import _DEFAULT_ENDPOINTS
+
+        assert (
+            google_code_assist.CODE_ASSIST_ENDPOINT
+            == _DEFAULT_ENDPOINTS["code_assist_base_url"]
+        )
+
     def test_parses_response(self, monkeypatch):
         from agent import google_code_assist
 
@@ -1069,6 +1078,95 @@ class TestLoadCodeAssist:
         info = google_code_assist.load_code_assist("access-token", project_id="corp-proj")
         assert info.current_tier_id == "standard-tier"
         assert info.cloudaicompanion_project == "corp-proj"
+
+    def test_custom_endpoint_is_used_once_without_fallback(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+
+        def boom(url, *args, **kwargs):
+            calls.append(url)
+            raise google_code_assist.CodeAssistError("proxy unavailable")
+
+        monkeypatch.setattr(google_code_assist, "_post_json", boom)
+
+        with pytest.raises(google_code_assist.CodeAssistError):
+            google_code_assist.load_code_assist(
+                "access-token", base_url="https://proxy.example.test/root/",
+            )
+
+        assert calls == [
+            "https://proxy.example.test/root/v1internal:loadCodeAssist",
+        ]
+
+    def test_official_endpoint_keeps_sandbox_fallbacks(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            if len(calls) < 3:
+                raise google_code_assist.CodeAssistError("unavailable")
+            return {"currentTier": {"id": "free-tier"}}
+
+        monkeypatch.setattr(google_code_assist, "_post_json", fake_post)
+
+        info = google_code_assist.load_code_assist("access-token")
+
+        assert info.current_tier_id == "free-tier"
+        assert calls == [
+            f"{google_code_assist.CODE_ASSIST_ENDPOINT}/v1internal:loadCodeAssist",
+            *[
+                f"{endpoint}/v1internal:loadCodeAssist"
+                for endpoint in google_code_assist.FALLBACK_ENDPOINTS
+            ],
+        ]
+
+    def test_custom_vpc_sc_error_does_not_reach_official_endpoint(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+
+        def boom(url, *args, **kwargs):
+            calls.append(url)
+            raise google_code_assist.CodeAssistError(
+                "VPC-SC policy violation", code="code_assist_vpc_sc",
+            )
+
+        monkeypatch.setattr(google_code_assist, "_post_json", boom)
+
+        info = google_code_assist.load_code_assist(
+            "access-token", project_id="corp-proj", base_url="https://proxy.test/",
+        )
+
+        assert info.current_tier_id == "standard-tier"
+        assert calls == ["https://proxy.test/v1internal:loadCodeAssist"]
+
+    def test_http_error_does_not_expose_access_token(self, monkeypatch, caplog):
+        from agent import google_code_assist
+
+        access_token = "secret-access-token"
+        error = urllib.error.HTTPError(
+            "https://proxy.example.test/root/v1internal:loadCodeAssist",
+            500,
+            "failed",
+            {},
+            io.BytesIO(f"backend echoed {access_token}".encode()),
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                access_token, base_url="https://proxy.example.test/root",
+            )
+
+        assert access_token not in str(exc_info.value)
+        assert access_token not in caplog.text
 
 
 class TestOnboardUser:
@@ -1111,6 +1209,75 @@ class TestOnboardUser:
         assert resp["done"] is True
         assert call_count["n"] >= 2
 
+    def test_custom_endpoint_is_used_for_onboard_and_all_polls(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+        responses = [
+            {"name": "operations/op-abc", "done": False},
+            {"name": "operations/op-abc", "done": False},
+            {"name": "operations/op-abc", "done": True, "response": {}},
+        ]
+
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            return responses.pop(0)
+
+        monkeypatch.setattr(google_code_assist, "_post_json", fake_post)
+        monkeypatch.setattr(google_code_assist.time, "sleep", lambda *_: None)
+
+        resp = google_code_assist.onboard_user(
+            "access-token",
+            tier_id="free-tier",
+            base_url="https://proxy.example.test/code-assist/",
+        )
+
+        assert resp["done"] is True
+        assert calls == [
+            "https://proxy.example.test/code-assist/v1internal:onboardUser",
+            "https://proxy.example.test/code-assist/v1internal/operations/op-abc",
+            "https://proxy.example.test/code-assist/v1internal/operations/op-abc",
+        ]
+
+    @pytest.mark.parametrize(
+        "operation_name",
+        [
+            "https://evil.test/operations/op",
+            "//evil.test/operations/op",
+            "//[",
+            "/operations/op",
+            "operations/op?token=secret",
+            "operations/op#secret",
+            "operations/../secret-token",
+            "operations/op\nsecret-token",
+            123,
+        ],
+    )
+    def test_rejects_unsafe_operation_name_without_polling_or_leaking_secrets(
+        self, monkeypatch, caplog, operation_name,
+    ):
+        from agent import google_code_assist
+
+        calls = []
+
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            return {"name": operation_name, "done": False}
+
+        monkeypatch.setattr(google_code_assist, "_post_json", fake_post)
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.onboard_user(
+                "secret-token",
+                tier_id="free-tier",
+                base_url="https://proxy.example.test/private-root",
+            )
+
+        assert len(calls) == 1
+        combined = f"{exc_info.value}\n{caplog.text}"
+        assert "secret-token" not in combined
+        assert "https://proxy.example.test/private-root" not in combined
+
 
 class TestRetrieveUserQuota:
     def test_parses_buckets(self, monkeypatch):
@@ -1137,6 +1304,24 @@ class TestRetrieveUserQuota:
         assert buckets[0].model_id == "gemini-2.5-pro"
         assert buckets[0].remaining_fraction == 0.75
         assert buckets[1].remaining_fraction == 0.9
+
+    def test_custom_endpoint_is_used(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda url, *args, **kwargs: calls.append(url) or {"buckets": []},
+        )
+
+        google_code_assist.retrieve_user_quota(
+            "at", base_url="https://proxy.example.test/root/",
+        )
+
+        assert calls == [
+            "https://proxy.example.test/root/v1internal:retrieveUserQuota",
+        ]
 
 
 class TestResolveProjectContext:
@@ -1179,6 +1364,72 @@ class TestResolveProjectContext:
         assert ctx.project_id == "discovered-proj"
         assert ctx.tier_id == "free-tier"
         assert ctx.source == "discovered"
+
+    def test_discovery_uses_custom_code_assist_endpoint(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda url, *args, **kwargs: calls.append(url) or {
+                "currentTier": {"id": "free-tier"},
+                "cloudaicompanionProject": "discovered-proj",
+            },
+        )
+
+        ctx = google_code_assist.resolve_project_context(
+            "at", code_assist_base_url="https://proxy.example.test/root/",
+        )
+
+        assert ctx.source == "discovered"
+        assert calls == [
+            "https://proxy.example.test/root/v1internal:loadCodeAssist",
+        ]
+
+    def test_onboarding_uses_same_custom_code_assist_endpoint(self, monkeypatch):
+        from agent import google_code_assist
+
+        calls = []
+
+        def fake_post(url, *args, **kwargs):
+            calls.append(url)
+            if url.endswith("v1internal:loadCodeAssist"):
+                return {}
+            return {
+                "done": True,
+                "response": {"cloudaicompanionProject": "onboarded-proj"},
+            }
+
+        monkeypatch.setattr(google_code_assist, "_post_json", fake_post)
+
+        ctx = google_code_assist.resolve_project_context(
+            "at", code_assist_base_url="https://proxy.example.test/root/",
+        )
+
+        assert ctx.source == "onboarded"
+        assert calls == [
+            "https://proxy.example.test/root/v1internal:loadCodeAssist",
+            "https://proxy.example.test/root/v1internal:onboardUser",
+        ]
+
+    def test_configured_fast_path_accepts_custom_endpoint_without_request(self, monkeypatch):
+        from agent import google_code_assist
+
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no request")),
+        )
+
+        ctx = google_code_assist.resolve_project_context(
+            "at",
+            configured_project_id="configured-proj",
+            code_assist_base_url="https://proxy.example.test/root/",
+        )
+
+        assert ctx.project_id == "configured-proj"
+        assert ctx.source == "config"
 
 
 # =============================================================================

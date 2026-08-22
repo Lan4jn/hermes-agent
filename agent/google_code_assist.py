@@ -26,11 +26,20 @@ from __future__ import annotations
 import json
 import logging
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
+
+try:
+    from agent.gemini_endpoints import OFFICIAL_CODE_ASSIST_BASE_URL
+except ImportError:  # Compatibility with endpoint config from older branches.
+    from agent.gemini_endpoints import _DEFAULT_ENDPOINTS
+
+    OFFICIAL_CODE_ASSIST_BASE_URL = _DEFAULT_ENDPOINTS["code_assist_base_url"]
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +48,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com"
+CODE_ASSIST_ENDPOINT = OFFICIAL_CODE_ASSIST_BASE_URL
 
 FALLBACK_ENDPOINTS = [
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
@@ -101,6 +110,11 @@ def _build_headers(access_token: str, *, user_agent_model: str = "") -> Dict[str
     }
 
 
+def _redact_access_token(value: object, access_token: str) -> str:
+    text = str(value)
+    return text.replace(access_token, "<redacted>") if access_token else text
+
+
 def _client_metadata() -> Dict[str, str]:
     """Match Google's gemini-cli exactly."""
     return {
@@ -133,18 +147,19 @@ def _post_json(
             detail = exc.read().decode("utf-8", errors="replace")
         except Exception:
             pass
+        safe_detail = _redact_access_token(detail, access_token)
         if _is_vpc_sc_violation(detail):
             raise CodeAssistError(
-                f"VPC-SC policy violation: {detail}",
+                f"VPC-SC policy violation: {safe_detail}",
                 code="code_assist_vpc_sc",
             ) from exc
         raise CodeAssistError(
-            f"Code Assist HTTP {exc.code}: {detail or exc.reason}",
+            f"Code Assist HTTP {exc.code}: {safe_detail or exc.reason}",
             code=f"code_assist_http_{exc.code}",
         ) from exc
     except urllib.error.URLError as exc:
         raise CodeAssistError(
-            f"Code Assist request failed: {exc}",
+            f"Code Assist request failed: {_redact_access_token(exc, access_token)}",
             code="code_assist_network_error",
         ) from exc
 
@@ -189,6 +204,7 @@ def load_code_assist(
     *,
     project_id: str = "",
     user_agent_model: str = "",
+    base_url: str = CODE_ASSIST_ENDPOINT,
 ) -> CodeAssistProjectInfo:
     """Call ``POST /v1internal:loadCodeAssist`` with prod → sandbox fallback."""
     body: Dict[str, Any] = {
@@ -200,7 +216,12 @@ def load_code_assist(
     if project_id:
         body["cloudaicompanionProject"] = project_id
 
-    endpoints = [CODE_ASSIST_ENDPOINT] + FALLBACK_ENDPOINTS
+    root = base_url.rstrip("/")
+    endpoints = (
+        [root, *FALLBACK_ENDPOINTS]
+        if root == CODE_ASSIST_ENDPOINT
+        else [root]
+    )
     last_err: Optional[Exception] = None
     for endpoint in endpoints:
         url = f"{endpoint}/v1internal:loadCodeAssist"
@@ -246,12 +267,35 @@ def _parse_load_response(resp: Dict[str, Any]) -> CodeAssistProjectInfo:
 # onboard_user — provisions a new user on a tier (with LRO polling)
 # =============================================================================
 
+def _validate_operation_name(operation_name: object) -> None:
+    invalid = not isinstance(operation_name, str)
+    try:
+        parsed = urlsplit(operation_name) if isinstance(operation_name, str) else None
+    except ValueError:
+        invalid = True
+        parsed = None
+    if isinstance(operation_name, str):
+        invalid = invalid or bool(
+            (parsed and (parsed.scheme or parsed.netloc))
+            or operation_name.startswith("/")
+            or "?" in operation_name
+            or "#" in operation_name
+            or ".." in operation_name.split("/")
+            or any(unicodedata.category(char) == "Cc" for char in operation_name)
+        )
+    if invalid:
+        raise CodeAssistError(
+            "Code Assist returned an invalid operation identifier",
+            code="code_assist_invalid_operation",
+        )
+
 def onboard_user(
     access_token: str,
     *,
     tier_id: str,
     project_id: str = "",
     user_agent_model: str = "",
+    base_url: str = CODE_ASSIST_ENDPOINT,
 ) -> Dict[str, Any]:
     """Call ``POST /v1internal:onboardUser`` to provision the user."""
     if tier_id != FREE_TIER_ID and tier_id != LEGACY_TIER_ID and not project_id:
@@ -267,17 +311,18 @@ def onboard_user(
     if project_id:
         body["cloudaicompanionProject"] = project_id
 
-    endpoint = CODE_ASSIST_ENDPOINT
-    url = f"{endpoint}/v1internal:onboardUser"
+    root = base_url.rstrip("/")
+    url = f"{root}/v1internal:onboardUser"
     resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
 
     if not resp.get("done"):
         op_name = resp.get("name", "")
         if not op_name:
             return resp
+        _validate_operation_name(op_name)
         for attempt in range(_ONBOARDING_POLL_ATTEMPTS):
             time.sleep(_ONBOARDING_POLL_INTERVAL_SECONDS)
-            poll_url = f"{endpoint}/v1internal/{op_name}"
+            poll_url = f"{root}/v1internal/{op_name}"
             try:
                 poll_resp = _post_json(poll_url, {}, access_token, user_agent_model=user_agent_model)
             except CodeAssistError as exc:
@@ -307,12 +352,14 @@ def retrieve_user_quota(
     *,
     project_id: str = "",
     user_agent_model: str = "",
+    base_url: str = CODE_ASSIST_ENDPOINT,
 ) -> List[QuotaBucket]:
     """Call ``POST /v1internal:retrieveUserQuota`` and parse ``buckets[]``."""
     body: Dict[str, Any] = {}
     if project_id:
         body["project"] = project_id
-    url = f"{CODE_ASSIST_ENDPOINT}/v1internal:retrieveUserQuota"
+    root = base_url.rstrip("/")
+    url = f"{root}/v1internal:retrieveUserQuota"
     resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
     raw_buckets = resp.get("buckets") or []
     buckets: List[QuotaBucket] = []
@@ -350,6 +397,7 @@ def resolve_project_context(
     configured_project_id: str = "",
     env_project_id: str = "",
     user_agent_model: str = "",
+    code_assist_base_url: str = CODE_ASSIST_ENDPOINT,
 ) -> ProjectContext:
     """Figure out what project id + tier to use for requests."""
     if configured_project_id:
@@ -365,7 +413,11 @@ def resolve_project_context(
             source="env",
         )
 
-    info = load_code_assist(access_token, user_agent_model=user_agent_model)
+    info = load_code_assist(
+        access_token,
+        user_agent_model=user_agent_model,
+        base_url=code_assist_base_url,
+    )
 
     effective_project = info.cloudaicompanion_project
     tier = info.current_tier_id
@@ -376,6 +428,7 @@ def resolve_project_context(
             tier_id=FREE_TIER_ID,
             project_id="",
             user_agent_model=user_agent_model,
+            base_url=code_assist_base_url,
         )
         response_body = onboard_resp.get("response") or {}
         if isinstance(response_body, dict):
