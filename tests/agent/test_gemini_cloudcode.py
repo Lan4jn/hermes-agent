@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import http.server
 import io
@@ -26,6 +27,38 @@ import urllib.parse
 from pathlib import Path
 
 import pytest
+
+
+@contextlib.contextmanager
+def _code_assist_server(response_body: bytes):
+    requests = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            requests.append({
+                "path": self.path,
+                "body": self.rfile.read(length),
+                "authorization": self.headers.get("Authorization"),
+            })
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests, thread
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def _custom_oauth_endpoints():
@@ -1042,12 +1075,9 @@ class TestCodeAssistVpcScDetection:
 class TestLoadCodeAssist:
     def test_code_assist_endpoint_remains_official_compatibility_alias(self):
         from agent import google_code_assist
-        from agent.gemini_endpoints import _DEFAULT_ENDPOINTS
+        from agent.gemini_endpoints import OFFICIAL_CODE_ASSIST_BASE_URL
 
-        assert (
-            google_code_assist.CODE_ASSIST_ENDPOINT
-            == _DEFAULT_ENDPOINTS["code_assist_base_url"]
-        )
+        assert google_code_assist.CODE_ASSIST_ENDPOINT == OFFICIAL_CODE_ASSIST_BASE_URL
 
     def test_parses_response(self, monkeypatch):
         from agent import google_code_assist
@@ -1206,6 +1236,149 @@ class TestLoadCodeAssist:
         assert exc_info.value.__cause__ is None
 
 
+class TestCodeAssistHttpPrimitive:
+    class FakeResponse:
+        def __init__(self, body):
+            self.body = body
+            self.read_sizes = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, size=-1):
+            self.read_sizes.append(size)
+            return self.body[:size]
+
+    def test_success_response_read_is_bounded(self, monkeypatch):
+        from agent import google_code_assist
+
+        response = self.FakeResponse(b"{}")
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: response,
+        )
+
+        assert google_code_assist._post_json("https://example.test", {}, "at") == {}
+        assert response.read_sizes == [google_code_assist.MAX_RESPONSE_BYTES + 1]
+
+    def test_success_response_over_limit_is_rejected(self, monkeypatch):
+        from agent import google_code_assist
+
+        response = self.FakeResponse(b"x" * (google_code_assist.MAX_RESPONSE_BYTES + 1))
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: response,
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist._post_json("https://example.test", {}, "at")
+
+        assert exc_info.value.code == "code_assist_response_too_large"
+
+    def test_http_error_response_read_is_bounded(self, monkeypatch):
+        from agent import google_code_assist
+
+        body = self.FakeResponse(b"x" * (google_code_assist.MAX_RESPONSE_BYTES + 1))
+        error = urllib.error.HTTPError(
+            "https://example.test", 500, "failed", {}, body,
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist._post_json("https://example.test", {}, "at")
+
+        assert exc_info.value.code == "code_assist_response_too_large"
+        assert body.read_sizes == [google_code_assist.MAX_RESPONSE_BYTES + 1]
+
+    def test_invalid_json_is_a_safe_structured_error(self, monkeypatch):
+        from agent import google_code_assist
+
+        secret = "secret-access-token"
+        response = self.FakeResponse(
+            f"not-json {secret} https://proxy.example.test/private".encode()
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: response,
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist._post_json("https://example.test", {}, secret)
+
+        assert exc_info.value.code == "code_assist_invalid_response"
+        assert exc_info.value.__cause__ is None
+        assert secret not in repr(exc_info.value)
+        assert "https://proxy.example.test/private" not in repr(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "transport_error",
+        [
+            urllib.error.URLError(
+                "secret-access-token https://proxy.example.test/private"
+            ),
+            TimeoutError("secret-access-token https://proxy.example.test/private"),
+        ],
+    )
+    def test_transport_errors_are_safe(self, monkeypatch, caplog, transport_error):
+        from agent import google_code_assist
+
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(transport_error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                "secret-access-token",
+                base_url="https://proxy.example.test/private",
+            )
+
+        exposed = f"{exc_info.value!r}\n{exc_info.value.__cause__!r}\n{caplog.text}"
+        assert exc_info.value.code == "code_assist_network_error"
+        assert exc_info.value.__cause__ is None
+        assert "secret-access-token" not in exposed
+        assert "https://proxy.example.test/private" not in exposed
+
+    def test_loopback_custom_request_uses_real_path_body_and_header(self):
+        from agent import google_code_assist
+
+        response = json.dumps({"currentTier": {"id": "free-tier"}}).encode()
+        with _code_assist_server(response) as (base_url, requests, thread):
+            info = google_code_assist.load_code_assist(
+                "loopback-token",
+                project_id="project-123",
+                base_url=f"{base_url}/custom/",
+            )
+
+        assert not thread.is_alive()
+        assert info.current_tier_id == "free-tier"
+        assert requests[0]["path"] == "/custom/v1internal:loadCodeAssist"
+        assert requests[0]["authorization"] == "Bearer loopback-token"
+        assert json.loads(requests[0]["body"])["cloudaicompanionProject"] == "project-123"
+
+    def test_loopback_oversized_response_is_rejected_and_server_stops(self):
+        from agent import google_code_assist
+
+        response = b"x" * (google_code_assist.MAX_RESPONSE_BYTES + 1)
+        with _code_assist_server(response) as (base_url, _, thread):
+            with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+                google_code_assist.load_code_assist("at", base_url=base_url)
+
+        assert exc_info.value.code == "code_assist_response_too_large"
+        assert not thread.is_alive()
+
+
 class TestOnboardUser:
     def test_paid_tier_requires_project_id(self):
         from agent import google_code_assist
@@ -1277,8 +1450,72 @@ class TestOnboardUser:
         ]
 
     @pytest.mark.parametrize(
+        "responses",
+        [
+            [{"done": True, "error": {"code": 13, "message": "failed"}}],
+            [
+                {"name": "operations/op-abc", "done": False},
+                {"name": "operations/op-abc", "done": True, "error": {"code": 13}},
+            ],
+        ],
+        ids=["initial", "poll"],
+    )
+    def test_done_lro_with_error_is_failure(self, monkeypatch, responses):
+        from agent import google_code_assist
+
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda *args, **kwargs: responses.pop(0),
+        )
+        monkeypatch.setattr(google_code_assist.time, "sleep", lambda *_: None)
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.onboard_user("at", tier_id="free-tier")
+
+        assert exc_info.value.code == "code_assist_onboarding_failed"
+
+    def test_lro_poll_exhaustion_is_timeout(self, monkeypatch):
+        from agent import google_code_assist
+
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda *args, **kwargs: {
+                "name": "operations/op-abc",
+                "done": False,
+            },
+        )
+        monkeypatch.setattr(google_code_assist, "_ONBOARDING_POLL_ATTEMPTS", 2)
+        monkeypatch.setattr(google_code_assist.time, "sleep", lambda *_: None)
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.onboard_user("at", tier_id="free-tier")
+
+        assert exc_info.value.code == "code_assist_onboarding_timeout"
+
+    def test_pending_lro_without_operation_name_is_rejected(self, monkeypatch):
+        from agent import google_code_assist
+
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda *args, **kwargs: {"done": False},
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.onboard_user("at", tier_id="free-tier")
+
+        assert exc_info.value.code == "code_assist_invalid_operation"
+
+    @pytest.mark.parametrize(
         "operation_name",
         [
+            "operations/.",
+            "operations/..",
+            "operations/op%2Fsecret",
+            "operations\\op",
+            "operations/op name",
             "https://evil.test/operations/op",
             "//evil.test/operations/op",
             "//[",
@@ -1286,6 +1523,8 @@ class TestOnboardUser:
             "operations/op?token=secret",
             "operations/op#secret",
             "operations/../secret-token",
+            "operations/op/extra",
+            "tasks/op",
             "operations/op\nsecret-token",
             123,
         ],
@@ -1302,6 +1541,7 @@ class TestOnboardUser:
             return {"name": operation_name, "done": False}
 
         monkeypatch.setattr(google_code_assist, "_post_json", fake_post)
+        monkeypatch.setattr(google_code_assist.time, "sleep", lambda *_: None)
 
         with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
             google_code_assist.onboard_user(
@@ -1312,6 +1552,7 @@ class TestOnboardUser:
 
         assert len(calls) == 1
         combined = f"{exc_info.value}\n{caplog.text}"
+        assert str(operation_name) not in combined
         assert "secret-token" not in combined
         assert "https://proxy.example.test/private-root" not in combined
 
@@ -1449,6 +1690,24 @@ class TestResolveProjectContext:
             "https://proxy.example.test/root/v1internal:loadCodeAssist",
             "https://proxy.example.test/root/v1internal:onboardUser",
         ]
+
+    def test_failed_onboarding_is_not_marked_onboarded(self, monkeypatch):
+        from agent import google_code_assist
+
+        responses = [
+            {},
+            {"done": True, "error": {"code": 13, "message": "failed"}},
+        ]
+        monkeypatch.setattr(
+            google_code_assist,
+            "_post_json",
+            lambda *args, **kwargs: responses.pop(0),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.resolve_project_context("at")
+
+        assert exc_info.value.code == "code_assist_onboarding_failed"
 
     def test_configured_fast_path_accepts_custom_endpoint_without_request(self, monkeypatch):
         from agent import google_code_assist

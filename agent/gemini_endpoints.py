@@ -11,15 +11,17 @@ from urllib.parse import urlsplit, urlunsplit
 __all__ = [
     "GeminiEndpointConfigError",
     "GeminiOAuthEndpoints",
+    "OFFICIAL_CODE_ASSIST_BASE_URL",
     "resolve_gemini_oauth_endpoints",
 ]
 
 
+OFFICIAL_CODE_ASSIST_BASE_URL = "https://cloudcode-pa.googleapis.com"
 _DEFAULT_ENDPOINTS = {
     "oauth_authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
     "oauth_token_url": "https://oauth2.googleapis.com/token",
     "oauth_userinfo_url": "https://www.googleapis.com/oauth2/v1/userinfo",
-    "code_assist_base_url": "https://cloudcode-pa.googleapis.com",
+    "code_assist_base_url": OFFICIAL_CODE_ASSIST_BASE_URL,
 }
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 

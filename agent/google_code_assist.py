@@ -25,21 +25,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-import unicodedata
 import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlsplit
 
-try:
-    from agent.gemini_endpoints import OFFICIAL_CODE_ASSIST_BASE_URL
-except ImportError:  # Compatibility with endpoint config from older branches.
-    from agent.gemini_endpoints import _DEFAULT_ENDPOINTS
-
-    OFFICIAL_CODE_ASSIST_BASE_URL = _DEFAULT_ENDPOINTS["code_assist_base_url"]
+from agent.gemini_endpoints import OFFICIAL_CODE_ASSIST_BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +56,10 @@ STANDARD_TIER_ID = "standard-tier"
 _GEMINI_CLI_USER_AGENT = "google-api-nodejs-client/9.15.1 (gzip)"
 _X_GOOG_API_CLIENT = "gl-node/24.0.0"
 _DEFAULT_REQUEST_TIMEOUT = 30.0
+MAX_RESPONSE_BYTES = 1024 * 1024
 _ONBOARDING_POLL_ATTEMPTS = 12
 _ONBOARDING_POLL_INTERVAL_SECONDS = 5.0
+_OPERATION_NAME_RE = re.compile(r"^operations/([A-Za-z0-9._~-]+)$")
 
 
 class CodeAssistError(RuntimeError):
@@ -124,6 +120,16 @@ def _client_metadata() -> Dict[str, str]:
     }
 
 
+def _read_response(response: Any) -> bytes:
+    raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise CodeAssistError(
+            "Code Assist response exceeded the size limit",
+            code="code_assist_response_too_large",
+        )
+    return raw
+
+
 def _post_json(
     url: str,
     body: Dict[str, Any],
@@ -139,12 +145,22 @@ def _post_json(
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            return json.loads(raw) if raw else {}
+            raw = _read_response(response).decode("utf-8", errors="replace")
+            if not raw:
+                return {}
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                raise CodeAssistError(
+                    "Code Assist returned an invalid JSON response",
+                    code="code_assist_invalid_response",
+                ) from None
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
-            detail = exc.read().decode("utf-8", errors="replace")
+            detail = _read_response(exc).decode("utf-8", errors="replace")
+        except CodeAssistError as read_error:
+            raise read_error from None
         except Exception:
             pass
         safe_detail = _redact_access_token(detail, access_token)
@@ -157,11 +173,11 @@ def _post_json(
             f"Code Assist HTTP {exc.code}: {safe_detail or 'request failed'}",
             code=f"code_assist_http_{exc.code}",
         ) from None
-    except urllib.error.URLError as exc:
+    except OSError:
         raise CodeAssistError(
-            f"Code Assist request failed: {_redact_access_token(exc, access_token)}",
+            "Code Assist request failed",
             code="code_assist_network_error",
-        ) from exc
+        ) from None
 
 
 def _is_vpc_sc_violation(body: str) -> bool:
@@ -268,26 +284,21 @@ def _parse_load_response(resp: Dict[str, Any]) -> CodeAssistProjectInfo:
 # =============================================================================
 
 def _validate_operation_name(operation_name: object) -> None:
-    invalid = not isinstance(operation_name, str)
-    try:
-        parsed = urlsplit(operation_name) if isinstance(operation_name, str) else None
-    except ValueError:
-        invalid = True
-        parsed = None
-    if isinstance(operation_name, str):
-        invalid = invalid or bool(
-            (parsed and (parsed.scheme or parsed.netloc))
-            or operation_name.startswith("/")
-            or "?" in operation_name
-            or "#" in operation_name
-            or ".." in operation_name.split("/")
-            or any(unicodedata.category(char) == "Cc" for char in operation_name)
-        )
-    if invalid:
+    match = _OPERATION_NAME_RE.fullmatch(operation_name) if isinstance(operation_name, str) else None
+    if not match or match.group(1) in {".", ".."}:
         raise CodeAssistError(
             "Code Assist returned an invalid operation identifier",
             code="code_assist_invalid_operation",
         )
+
+
+def _raise_if_onboarding_failed(response: Dict[str, Any]) -> None:
+    if response.get("done") and response.get("error"):
+        raise CodeAssistError(
+            "Code Assist onboarding failed",
+            code="code_assist_onboarding_failed",
+        )
+
 
 def onboard_user(
     access_token: str,
@@ -314,11 +325,10 @@ def onboard_user(
     root = base_url.rstrip("/")
     url = f"{root}/v1internal:onboardUser"
     resp = _post_json(url, body, access_token, user_agent_model=user_agent_model)
+    _raise_if_onboarding_failed(resp)
 
     if not resp.get("done"):
         op_name = resp.get("name", "")
-        if not op_name:
-            return resp
         _validate_operation_name(op_name)
         for attempt in range(_ONBOARDING_POLL_ATTEMPTS):
             time.sleep(_ONBOARDING_POLL_INTERVAL_SECONDS)
@@ -329,8 +339,12 @@ def onboard_user(
                 logger.warning("Onboarding poll attempt %d failed: %s", attempt + 1, exc)
                 continue
             if poll_resp.get("done"):
+                _raise_if_onboarding_failed(poll_resp)
                 return poll_resp
-        logger.warning("Onboarding did not complete within %d attempts", _ONBOARDING_POLL_ATTEMPTS)
+        raise CodeAssistError(
+            "Code Assist onboarding timed out",
+            code="code_assist_onboarding_timeout",
+        )
     return resp
 
 

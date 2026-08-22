@@ -9,6 +9,7 @@ import pytest
 from agent.gemini_endpoints import (
     GeminiEndpointConfigError,
     GeminiOAuthEndpoints,
+    OFFICIAL_CODE_ASSIST_BASE_URL,
     resolve_gemini_oauth_endpoints,
 )
 
@@ -32,6 +33,10 @@ def test_official_defaults_are_frozen() -> None:
     assert endpoints == DEFAULTS
     with pytest.raises(FrozenInstanceError):
         endpoints.oauth_token_url = "https://example.test/token"  # type: ignore[misc]
+
+
+def test_official_code_assist_base_url_is_public() -> None:
+    assert OFFICIAL_CODE_ASSIST_BASE_URL == DEFAULTS.code_assist_base_url
 
 
 @pytest.mark.parametrize(
@@ -304,6 +309,7 @@ def test_public_exports_are_explicit() -> None:
     required_exports = {
         "GeminiEndpointConfigError",
         "GeminiOAuthEndpoints",
+        "OFFICIAL_CODE_ASSIST_BASE_URL",
         "resolve_gemini_oauth_endpoints",
     }
 
