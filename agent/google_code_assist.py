@@ -152,11 +152,11 @@ def _post_json(
             raise CodeAssistError(
                 f"VPC-SC policy violation: {safe_detail}",
                 code="code_assist_vpc_sc",
-            ) from exc
+            ) from None
         raise CodeAssistError(
-            f"Code Assist HTTP {exc.code}: {safe_detail or exc.reason}",
+            f"Code Assist HTTP {exc.code}: {safe_detail or 'request failed'}",
             code=f"code_assist_http_{exc.code}",
-        ) from exc
+        ) from None
     except urllib.error.URLError as exc:
         raise CodeAssistError(
             f"Code Assist request failed: {_redact_access_token(exc, access_token)}",
@@ -236,7 +236,7 @@ def load_code_assist(
                     cloudaicompanion_project=project_id,
                 )
             last_err = exc
-            logger.warning("loadCodeAssist failed on %s: %s", endpoint, exc)
+            logger.warning("loadCodeAssist request failed: %s", exc)
             continue
     if last_err:
         raise last_err

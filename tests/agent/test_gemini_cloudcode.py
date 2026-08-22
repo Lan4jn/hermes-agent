@@ -1168,6 +1168,43 @@ class TestLoadCodeAssist:
         assert access_token not in str(exc_info.value)
         assert access_token not in caplog.text
 
+    def test_empty_http_error_redacts_reason_and_drops_sensitive_cause(
+        self, monkeypatch, caplog,
+    ):
+        from agent import google_code_assist
+
+        access_token = "secret-access-token"
+        custom_base_url = "https://proxy.example.test/private-root"
+        client_secret = "secret-client-credential"
+        reason = f"token={access_token} url={custom_base_url} secret={client_secret}"
+        error = urllib.error.HTTPError(
+            f"{custom_base_url}/v1internal:loadCodeAssist",
+            500,
+            reason,
+            {},
+            io.BytesIO(b""),
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                access_token, base_url=custom_base_url,
+            )
+
+        exposed = (
+            str(exc_info.value),
+            repr(exc_info.value),
+            repr(exc_info.value.__cause__),
+            caplog.text,
+        )
+        for sensitive in (access_token, custom_base_url, client_secret):
+            assert all(sensitive not in value for value in exposed)
+        assert exc_info.value.__cause__ is None
+
 
 class TestOnboardUser:
     def test_paid_tier_requires_project_id(self):
