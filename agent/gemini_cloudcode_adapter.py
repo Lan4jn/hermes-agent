@@ -54,6 +54,20 @@ from agent.google_code_assist import (
 
 logger = logging.getLogger(__name__)
 
+_GOOGLE_ERROR_PROTOCOL_KEYS = frozenset({
+    "error",
+    "code",
+    "message",
+    "status",
+    "details",
+    "@type",
+    "reason",
+    "metadata",
+    "retryDelay",
+    "model",
+    "modelId",
+})
+
 
 # =============================================================================
 # Request translation: OpenAI → Gemini
@@ -856,7 +870,11 @@ def _gemini_http_error(
             redacted_key_index = 0
             for key, item in value.items():
                 safe_key = key
-                if isinstance(key, str) and _redact(key) != key:
+                if (
+                    isinstance(key, str)
+                    and key not in _GOOGLE_ERROR_PROTOCOL_KEYS
+                    and _redact(key) != key
+                ):
                     while True:
                         safe_key = f"[REDACTED_KEY_{redacted_key_index}]"
                         redacted_key_index += 1

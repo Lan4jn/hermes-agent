@@ -2838,12 +2838,20 @@ class TestGeminiCloudCodeClient:
 
         def handler(request):
             return httpx.Response(429, json={"error": {
+                "code": 429,
                 "message": "quota exhausted at /error",
                 "status": "RESOURCE_EXHAUSTED",
-                "details": [{
-                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
-                    "retryDelay": "23s",
-                }],
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "/error",
+                        "metadata": {"model": "/error", "modelId": "/error"},
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "23s",
+                    },
+                ],
             }})
 
         client = GeminiCloudCodeClient(
@@ -2858,7 +2866,15 @@ class TestGeminiCloudCodeClient:
             classified = classify_api_error(
                 error, provider="google-gemini-cli", model="gemini-test",
             )
-            assert "error" in error.response.json()
+            safe_error = error.response.json()["error"]
+            assert set(safe_error) == {"code", "message", "status", "details"}
+            assert set(safe_error["details"][0]) == {
+                "@type", "reason", "metadata",
+            }
+            assert set(safe_error["details"][0]["metadata"]) == {
+                "model", "modelId",
+            }
+            assert set(safe_error["details"][1]) == {"@type", "retryDelay"}
             assert error.code == "code_assist_rate_limited"
             assert error.retry_after == 23.0
             assert error.response.headers["Retry-After"] == "23"
@@ -2868,6 +2884,89 @@ class TestGeminiCloudCodeClient:
                 repr(classified), classified.message, caplog.text,
             ))
             assert "/error" not in rendered
+        finally:
+            client.close()
+
+    def test_single_segment_secret_redacts_text_values_and_non_protocol_keys(
+        self, monkeypatch, caplog,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        access_token = "tenant-oauth-token"
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: access_token,
+        )
+
+        def handler(request):
+            return httpx.Response(429, json={"error": {
+                "message": f"tenant-secret /tenant-secret {access_token}",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "tenant-secret",
+                    "metadata": {
+                        "tenant-secret": "tenant-secret",
+                        "message": "tenant-secret",
+                    },
+                }],
+            }})
+
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/tenant-secret",
+            project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert classified.reason == FailoverReason.rate_limit
+            safe_metadata = error.response.json()["error"]["details"][0]["metadata"]
+            assert "message" in safe_metadata
+            assert any(key.startswith("[REDACTED_KEY_") for key in safe_metadata)
+            rendered = "\n".join((
+                str(error), repr(error.details), error.response.text,
+                repr(classified), classified.message, caplog.text,
+            ))
+            for sensitive in ("tenant-secret", "/tenant-secret", access_token):
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
+    def test_protocol_key_allowlist_is_case_sensitive(self, monkeypatch):
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: "token",
+        )
+        client = GeminiCloudCodeClient(
+            base_url="https://proxy.example.test/ERROR", project_id="project-1",
+        )
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(500, json={"error": {
+                "message": "failed",
+                "status": "INTERNAL",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "INTERNAL",
+                    "metadata": {"ERROR": "safe-value"},
+                }],
+            }})
+        ))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            safe_metadata = exc_info.value.response.json()["error"]["details"][0]["metadata"]
+            assert "ERROR" not in safe_metadata
+            assert list(safe_metadata.values()) == ["safe-value"]
         finally:
             client.close()
 
