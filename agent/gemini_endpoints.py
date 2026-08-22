@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -45,7 +46,13 @@ def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, b
         raise GeminiEndpointConfigError(
             f"{field}: surrounding whitespace is not allowed"
         )
-    if any(ord(char) < 0x20 or ord(char) == 0x7F or char.isspace() for char in value):
+    if any(
+        ord(char) < 0x20
+        or ord(char) == 0x7F
+        or char.isspace()
+        or unicodedata.category(char) == "Cc"
+        for char in value
+    ):
         raise GeminiEndpointConfigError(
             f"{field}: whitespace and control characters are not allowed"
         )

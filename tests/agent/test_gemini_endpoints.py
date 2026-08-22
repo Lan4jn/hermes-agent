@@ -144,6 +144,8 @@ def test_empty_query_or_fragment_delimiters_are_rejected(url: str) -> None:
         "https://example.test/to\rken",
         "https://exam\x00ple.test/token",
         "https://example.test/to\x00ken",
+        "https://exam\u0080ple.test/token",
+        "https://example.test/to\u009fken",
     ],
     ids=[
         "leading-whitespace",
@@ -153,6 +155,8 @@ def test_empty_query_or_fragment_delimiters_are_rejected(url: str) -> None:
         "carriage-return-in-path",
         "nul-in-host",
         "nul-in-path",
+        "unicode-control-in-host",
+        "unicode-control-in-path",
     ],
 )
 def test_endpoint_rejects_raw_whitespace_and_control_characters(url: str) -> None:
