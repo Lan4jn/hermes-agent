@@ -6,7 +6,7 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 __all__ = [
     "code_assist_sensitive_values",
@@ -62,6 +62,8 @@ def _normalize_endpoint(field: str, value: object, default: str) -> tuple[str, b
         )
 
     candidate = value
+    if "\\" in candidate:
+        raise GeminiEndpointConfigError(f"{field}: backslashes are not allowed")
     if "?" in candidate:
         raise GeminiEndpointConfigError(f"{field}: query strings are not allowed")
     if "#" in candidate:
@@ -106,11 +108,25 @@ def normalize_code_assist_base_url(
 def code_assist_sensitive_values(base_url: object) -> tuple[str, ...]:
     """Return endpoint values that must be removed from errors and logs."""
     normalized = normalize_code_assist_base_url(base_url)
-    values = [normalized]
-    endpoint_path = urlsplit(normalized).path
-    if endpoint_path and endpoint_path != "/":
-        values.extend((endpoint_path, endpoint_path.lstrip("/")))
-    return tuple(dict.fromkeys(value for value in values if value and value != "/"))
+    parsed = urlsplit(normalized)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    path_forms = [parsed.path]
+    current = parsed.path
+    for _ in range(3):
+        decoded = unquote(current)
+        if decoded == current:
+            break
+        path_forms.append(decoded)
+        current = decoded
+    path_forms.extend(quote(path, safe="/") for path in tuple(path_forms))
+
+    values = {normalized}
+    for path in path_forms:
+        with_slash = f"/{path.lstrip('/')}"
+        without_slash = with_slash.lstrip("/")
+        if with_slash != "/":
+            values.update((with_slash, without_slash, f"{origin}{with_slash}"))
+    return tuple(sorted(values, key=lambda value: (-len(value), value)))
 
 
 def resolve_gemini_oauth_endpoints(

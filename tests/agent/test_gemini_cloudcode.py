@@ -1242,6 +1242,43 @@ class TestLoadCodeAssist:
         ):
             assert sensitive not in rendered
 
+    def test_custom_http_error_redacts_canonical_encoded_paths(
+        self, monkeypatch, caplog,
+    ):
+        from agent import google_code_assist
+
+        access_token = "canonical-secret-token"
+        custom_base_url = "https://proxy.example.test/private/%2522customer"
+        private_variants = (
+            custom_base_url,
+            "https://proxy.example.test/private/%22customer",
+            "https://proxy.example.test/private/\"customer",
+            "/private/%2522customer", "private/%2522customer",
+            "/private/%22customer", "private/%22customer",
+            "/private/\"customer", "private/\"customer",
+        )
+        error = urllib.error.HTTPError(
+            f"{custom_base_url}/v1internal:loadCodeAssist",
+            500,
+            "failed",
+            {},
+            io.BytesIO(" | ".join((*private_variants, access_token)).encode()),
+        )
+        monkeypatch.setattr(
+            google_code_assist.urllib.request,
+            "urlopen",
+            lambda *args, **kwargs: (_ for _ in ()).throw(error),
+        )
+
+        with pytest.raises(google_code_assist.CodeAssistError) as exc_info:
+            google_code_assist.load_code_assist(
+                access_token, base_url=custom_base_url,
+            )
+
+        rendered = f"{exc_info.value!r}\n{caplog.text}"
+        for sensitive in (*private_variants, access_token):
+            assert sensitive not in rendered
+
     def test_empty_http_error_redacts_reason_and_drops_sensitive_cause(
         self, monkeypatch, caplog,
     ):
@@ -2633,6 +2670,88 @@ class TestGeminiCloudCodeClient:
                 repr(classified), classified.message, caplog.text,
             ))
             for sensitive in (private_base, private_path, private_path.lstrip("/"), access_token):
+                assert sensitive not in rendered
+        finally:
+            client.close()
+
+    @pytest.mark.parametrize(
+        ("private_base", "private_variants"),
+        [
+            (
+                "https://proxy.example.test/private/%22customer",
+                (
+                    "https://proxy.example.test/private/%22customer",
+                    "https://proxy.example.test/private/\"customer",
+                    "/private/%22customer", "private/%22customer",
+                    "/private/\"customer", "private/\"customer",
+                ),
+            ),
+            (
+                "https://proxy.example.test/private/%2522customer",
+                (
+                    "https://proxy.example.test/private/%2522customer",
+                    "https://proxy.example.test/private/%22customer",
+                    "https://proxy.example.test/private/\"customer",
+                    "/private/%2522customer", "private/%2522customer",
+                    "/private/%22customer", "private/%22customer",
+                    "/private/\"customer", "private/\"customer",
+                ),
+            ),
+            (
+                "https://proxy.example.test/private/%5csecret",
+                (
+                    "https://proxy.example.test/private/%5csecret",
+                    "https://proxy.example.test/private/%5Csecret",
+                    "https://proxy.example.test/private/\\secret",
+                    "/private/%5csecret", "private/%5csecret",
+                    "/private/%5Csecret", "private/%5Csecret",
+                    "/private/\\secret", "private/\\secret",
+                ),
+            ),
+        ],
+    )
+    def test_canonical_proxy_paths_are_redacted_everywhere(
+        self, monkeypatch, caplog, private_base, private_variants,
+    ):
+        from agent.error_classifier import FailoverReason, classify_api_error
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        from agent.google_code_assist import CodeAssistError
+
+        access_token = "canonical-secret-token"
+        monkeypatch.setattr(
+            "agent.google_oauth.get_valid_access_token", lambda **_: access_token,
+        )
+
+        def handler(request):
+            return httpx.Response(
+                429,
+                json={"error": {
+                    "message": " | ".join((*private_variants, access_token)),
+                    "status": "RESOURCE_EXHAUSTED",
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": " | ".join(private_variants),
+                    }],
+                }},
+            )
+
+        client = GeminiCloudCodeClient(base_url=private_base, project_id="project-1")
+        client._http.close()
+        client._http = httpx.Client(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(CodeAssistError) as exc_info:
+                client.chat.completions.create(model="gemini-test", messages=[])
+            error = exc_info.value
+            classified = classify_api_error(
+                error, provider="google-gemini-cli", model="gemini-test",
+            )
+            assert classified.reason == FailoverReason.rate_limit
+            rendered = "\n".join((
+                str(error), repr(error.details), error.response.text,
+                "".join(traceback.format_exception(error)),
+                repr(classified), classified.message, caplog.text,
+            ))
+            for sensitive in (*private_variants, access_token):
                 assert sensitive not in rendered
         finally:
             client.close()

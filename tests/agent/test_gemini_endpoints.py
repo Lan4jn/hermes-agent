@@ -77,6 +77,85 @@ def test_code_assist_sensitive_values_include_fullbase_and_nonroot_path() -> Non
 
 
 @pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (
+            "https://proxy.example.test/private/%22customer",
+            {
+                "https://proxy.example.test/private/%22customer",
+                "https://proxy.example.test/private/\"customer",
+                "/private/%22customer",
+                "private/%22customer",
+                "/private/\"customer",
+                "private/\"customer",
+            },
+        ),
+        (
+            "https://proxy.example.test/private/%2522customer",
+            {
+                "https://proxy.example.test/private/%2522customer",
+                "https://proxy.example.test/private/%22customer",
+                "https://proxy.example.test/private/\"customer",
+                "/private/%2522customer",
+                "private/%2522customer",
+                "/private/%22customer",
+                "private/%22customer",
+                "/private/\"customer",
+                "private/\"customer",
+            },
+        ),
+        (
+            "https://proxy.example.test/private/%5csecret",
+            {
+                "https://proxy.example.test/private/%5csecret",
+                "https://proxy.example.test/private/%5Csecret",
+                "https://proxy.example.test/private/\\secret",
+                "/private/%5csecret",
+                "private/%5csecret",
+                "/private/%5Csecret",
+                "private/%5Csecret",
+                "/private/\\secret",
+                "private/\\secret",
+            },
+        ),
+    ],
+)
+def test_code_assist_sensitive_values_canonicalize_encoded_paths(
+    base_url: str, expected: set[str],
+) -> None:
+    values = code_assist_sensitive_values(base_url)
+
+    assert expected.issubset(values)
+    assert [len(value) for value in values] == sorted(
+        (len(value) for value in values), reverse=True,
+    )
+    assert "/" not in values
+    assert "proxy" not in values
+    assert "example" not in values
+
+
+def test_code_assist_base_rejects_raw_backslash_but_accepts_encoded() -> None:
+    with pytest.raises(GeminiEndpointConfigError):
+        normalize_code_assist_base_url(
+            "https://proxy.example.test/private/\\secret"
+        )
+
+    assert normalize_code_assist_base_url(
+        "https://proxy.example.test/private/%5Csecret"
+    ) == "https://proxy.example.test/private/%5Csecret"
+
+
+def test_code_assist_sensitive_decoding_is_bounded_to_three_layers() -> None:
+    values = code_assist_sensitive_values(
+        "https://proxy.example.test/private/%2525252522customer"
+    )
+
+    assert "/private/%2522customer" in values
+    assert "/private/%22customer" not in values
+    assert "/private/\"customer" not in values
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("oauth_authorize_url", "https://auth.example.test/authorize"),

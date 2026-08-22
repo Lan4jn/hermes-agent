@@ -839,6 +839,21 @@ def _gemini_http_error(
     """
     status = response.status_code
 
+    def _redact(value: str) -> str:
+        for sensitive in sensitive_values:
+            if sensitive:
+                value = value.replace(sensitive, "<redacted>")
+        return value
+
+    def _redact_json(value: Any) -> Any:
+        if isinstance(value, str):
+            return _redact(value)
+        if isinstance(value, list):
+            return [_redact_json(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _redact_json(item) for key, item in value.items()}
+        return value
+
     # Parse the body once, surviving any weird encodings.
     body_text = ""
     body_json: Dict[str, Any] = {}
@@ -846,14 +861,12 @@ def _gemini_http_error(
         body_text = response.text
     except Exception:
         body_text = ""
-    for value in sensitive_values:
-        if value:
-            body_text = body_text.replace(value, "<redacted>")
+    body_text = _redact(body_text)
     if body_text:
         try:
             parsed = json.loads(body_text)
             if isinstance(parsed, dict):
-                body_json = parsed
+                body_json = _redact_json(parsed)
         except (ValueError, TypeError):
             body_json = {}
 

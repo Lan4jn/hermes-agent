@@ -83,3 +83,48 @@ def test_gquota_custom_http_error_does_not_print_proxy_path_or_token(monkeypatch
         access_token, custom_base_url, private_path, private_path.lstrip("/"),
     ):
         assert sensitive not in rendered
+
+
+def test_gquota_redacts_canonical_encoded_proxy_paths(monkeypatch, caplog):
+    from cli import HermesCLI
+
+    access_token = "canonical-secret-token"
+    custom_base_url = "https://proxy.example.test/private/%2522customer"
+    private_variants = (
+        custom_base_url,
+        "https://proxy.example.test/private/%22customer",
+        "https://proxy.example.test/private/\"customer",
+        "/private/%2522customer", "private/%2522customer",
+        "/private/%22customer", "private/%22customer",
+        "/private/\"customer", "private/\"customer",
+    )
+    error = urllib.error.HTTPError(
+        f"{custom_base_url}/v1internal:retrieveUserQuota",
+        500,
+        "failed",
+        {},
+        io.BytesIO(" | ".join((*private_variants, access_token)).encode()),
+    )
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.console = MagicMock()
+    cli._app = None
+
+    with patch(
+        "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+        return_value={
+            "api_key": access_token,
+            "project_id": "project-1",
+            "base_url": custom_base_url,
+        },
+    ):
+        cli._handle_gquota_command("/gquota")
+
+    rendered = "\n".join((
+        *(str(call) for call in cli.console.print.call_args_list), caplog.text,
+    ))
+    for sensitive in (*private_variants, access_token):
+        assert sensitive not in rendered
