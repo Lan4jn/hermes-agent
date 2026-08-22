@@ -7237,8 +7237,10 @@ def resolve_gemini_oauth_runtime_credentials(
             code=exc.code,
         ) from exc
 
+    from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+
     creds = load_credentials()
-    base_url = DEFAULT_GEMINI_CLOUDCODE_BASE_URL
+    base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
     return {
         "provider": "google-gemini-cli",
         "base_url": base_url,

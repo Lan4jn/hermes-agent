@@ -895,13 +895,13 @@ def _model_flow_minimax_oauth(config, current_model="", args=None):
 def _model_flow_google_gemini_cli(_config, current_model=""):
     """Google Gemini OAuth (PKCE) via Cloud Code Assist — supports free AND paid tiers."""
     from hermes_cli.auth import (
-        DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
         get_gemini_oauth_auth_status,
         resolve_gemini_oauth_runtime_credentials,
         _prompt_model_selection,
         _save_model_choice,
         _update_config_for_provider,
     )
+    from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
     from hermes_cli.models import _PROVIDER_MODELS
 
     status = get_gemini_oauth_auth_status()
@@ -930,17 +930,20 @@ def _model_flow_google_gemini_cli(_config, current_model=""):
         return
 
     models = list(_PROVIDER_MODELS.get("google-gemini-cli") or [])
+    code_assist_base_url = resolve_gemini_oauth_endpoints(
+        _config
+    ).code_assist_base_url
     default = current_model or (models[0] if models else "gemini-3-flash-preview")
     selected = _prompt_model_selection(
         models,
         current_model=default,
         confirm_provider="google-gemini-cli",
-        confirm_base_url=DEFAULT_GEMINI_CLOUDCODE_BASE_URL,
+        confirm_base_url=code_assist_base_url,
     )
     if selected:
         _save_model_choice(selected)
         _update_config_for_provider(
-            "google-gemini-cli", DEFAULT_GEMINI_CLOUDCODE_BASE_URL
+            "google-gemini-cli", code_assist_base_url
         )
         print(
             f"Default model set to: {selected} (via Google Gemini OAuth / Code Assist)"

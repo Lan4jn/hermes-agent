@@ -124,7 +124,7 @@ class TestProviderPersistsAfterModelSave:
             return_value={
                 "provider": "google-gemini-cli",
                 "api_key": "ya29.test",
-                "base_url": "cloudcode-pa://google",
+                "base_url": "https://cloudcode-pa.googleapis.com",
                 "project_id": "proj-123",
             },
         ), patch(
@@ -139,9 +139,42 @@ class TestProviderPersistsAfterModelSave:
         model = config.get("model")
         assert isinstance(model, dict), f"model should be dict, got {type(model)}"
         assert model.get("provider") == "google-gemini-cli"
-        assert model.get("base_url") == "cloudcode-pa://google"
+        assert model.get("base_url") == "https://cloudcode-pa.googleapis.com"
         assert model.get("default") == "gemini-3.1-pro-preview"
         assert "api_mode" not in model
+
+    def test_google_gemini_cli_preserves_custom_endpoint_config(self, config_home):
+        from hermes_cli.config import load_config
+        from hermes_cli.main import _model_flow_google_gemini_cli
+
+        import yaml
+
+        endpoint_config = {
+            "oauth_authorize_url": "https://proxy.example.test/oauth/authorize",
+            "oauth_token_url": "https://proxy.example.test/oauth/token",
+            "oauth_userinfo_url": "https://proxy.example.test/oauth/userinfo",
+            "code_assist_base_url": "https://proxy.example.test/private/code",
+        }
+        (config_home / "config.yaml").write_text(yaml.safe_dump({
+            "model": "old-model",
+            "providers": {"google-gemini-cli": endpoint_config},
+        }))
+        config = load_config()
+
+        with patch(
+            "hermes_cli.auth.get_gemini_oauth_auth_status", return_value={"logged_in": True},
+        ), patch(
+            "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+            return_value={"project_id": "project-1"},
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection", return_value="gemini-test",
+        ) as prompt:
+            _model_flow_google_gemini_cli(config, "old-model")
+
+        saved = load_config()
+        assert saved["providers"]["google-gemini-cli"] == endpoint_config
+        assert saved["model"]["base_url"] == endpoint_config["code_assist_base_url"]
+        assert prompt.call_args.kwargs["confirm_base_url"] == endpoint_config["code_assist_base_url"]
 
 
 
@@ -230,4 +263,3 @@ class TestZaiEndpointPicker:
         # Default should point at index 2 (coding-global)
         assert captured["default"] == 2
         assert result == coding_url
-

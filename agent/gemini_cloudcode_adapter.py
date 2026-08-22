@@ -38,9 +38,9 @@ from typing import Any, Dict, Iterator, List, Optional
 import httpx
 
 from agent import google_oauth
+from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
 from agent.gemini_schema import sanitize_gemini_tool_parameters
 from agent.google_code_assist import (
-    CODE_ASSIST_ENDPOINT,
     CodeAssistError,
     ProjectContext,
     resolve_project_context,
@@ -610,7 +610,9 @@ class GeminiCloudCodeClient:
         # fetched on every call via agent.google_oauth.get_valid_access_token().
         # We accept the kwarg for openai.OpenAI interface parity.
         self.api_key = api_key or "google-oauth"
-        self.base_url = base_url or MARKER_BASE_URL
+        if not base_url or base_url == MARKER_BASE_URL:
+            base_url = resolve_gemini_oauth_endpoints().code_assist_base_url
+        self.base_url = base_url.rstrip("/")
         self._default_headers = dict(default_headers or {})
         self._configured_project_id = project_id
         self._project_context: Optional[ProjectContext] = None
@@ -657,6 +659,7 @@ class GeminiCloudCodeClient:
             configured_project_id=self._configured_project_id,
             env_project_id=env_project,
             user_agent_model=model,
+            code_assist_base_url=self.base_url,
         )
         # Persist discovered project back to the creds file so the next
         # session doesn't re-run the discovery.
@@ -720,10 +723,22 @@ class GeminiCloudCodeClient:
         if stream:
             return self._stream_completion(model=model, wrapped=wrapped, headers=headers)
 
-        url = f"{CODE_ASSIST_ENDPOINT}/v1internal:generateContent"
-        response = self._http.post(url, json=wrapped, headers=headers)
+        url = f"{self.base_url}/v1internal:generateContent"
+        try:
+            response = self._http.post(url, json=wrapped, headers=headers)
+            if response.status_code == 401:
+                access_token = google_oauth.get_valid_access_token(force_refresh=True)
+                headers["Authorization"] = f"Bearer {access_token}"
+                response = self._http.post(url, json=wrapped, headers=headers)
+        except httpx.HTTPError:
+            raise CodeAssistError(
+                "Code Assist request failed",
+                code="code_assist_network_error",
+            ) from None
         if response.status_code != 200:
-            raise _gemini_http_error(response)
+            raise _gemini_http_error(
+                response, sensitive_values=(self.base_url, access_token)
+            )
         try:
             payload = response.json()
         except ValueError as exc:
@@ -741,31 +756,53 @@ class GeminiCloudCodeClient:
         headers: Dict[str, str],
     ) -> Iterator[_GeminiStreamChunk]:
         """Generator that yields OpenAI-shaped streaming chunks."""
-        url = f"{CODE_ASSIST_ENDPOINT}/v1internal:streamGenerateContent?alt=sse"
+        url = f"{self.base_url}/v1internal:streamGenerateContent?alt=sse"
         stream_headers = dict(headers)
         stream_headers["Accept"] = "text/event-stream"
 
         def _generator() -> Iterator[_GeminiStreamChunk]:
             try:
-                with self._http.stream("POST", url, json=wrapped, headers=stream_headers) as response:
-                    if response.status_code != 200:
-                        # Materialize error body for better diagnostics
-                        response.read()
-                        raise _gemini_http_error(response)
-                    tool_call_counter: List[int] = [0]
-                    for event in _iter_sse_events(response):
-                        for chunk in _translate_stream_event(event, model, tool_call_counter):
-                            yield chunk
-            except httpx.HTTPError as exc:
+                for attempt in range(2):
+                    with self._http.stream(
+                        "POST", url, json=wrapped, headers=stream_headers,
+                    ) as response:
+                        if response.status_code == 401 and attempt == 0:
+                            response.read()
+                            access_token = google_oauth.get_valid_access_token(
+                                force_refresh=True
+                            )
+                            stream_headers["Authorization"] = f"Bearer {access_token}"
+                            continue
+                        if response.status_code != 200:
+                            response.read()
+                            raise _gemini_http_error(
+                                response,
+                                sensitive_values=(
+                                    self.base_url,
+                                    stream_headers["Authorization"].removeprefix(
+                                        "Bearer "
+                                    ),
+                                ),
+                            )
+                        tool_call_counter: List[int] = [0]
+                        for event in _iter_sse_events(response):
+                            for chunk in _translate_stream_event(
+                                event, model, tool_call_counter
+                            ):
+                                yield chunk
+                        return
+            except httpx.HTTPError:
                 raise CodeAssistError(
-                    f"Streaming request failed: {exc}",
+                    "Streaming request failed",
                     code="code_assist_stream_error",
-                ) from exc
+                ) from None
 
         return _generator()
 
 
-def _gemini_http_error(response: httpx.Response) -> CodeAssistError:
+def _gemini_http_error(
+    response: httpx.Response, *, sensitive_values: tuple[str, ...] = ()
+) -> CodeAssistError:
     """Translate an httpx response into a CodeAssistError with rich metadata.
 
     Parses Google's error envelope (``{"error": {"code", "message", "status",
@@ -791,6 +828,9 @@ def _gemini_http_error(response: httpx.Response) -> CodeAssistError:
         body_text = response.text
     except Exception:
         body_text = ""
+    for value in sensitive_values:
+        if value:
+            body_text = body_text.replace(value, "<redacted>")
     if body_text:
         try:
             parsed = json.loads(body_text)

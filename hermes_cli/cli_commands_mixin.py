@@ -1519,24 +1519,27 @@ class CLICommandsMixin:
     def _handle_gquota_command(self, cmd_original: str) -> None:
         """Show Google Gemini Code Assist quota usage for the current OAuth account."""
         try:
-            from agent.google_oauth import get_valid_access_token, GoogleOAuthError, load_credentials
             from agent.google_code_assist import retrieve_user_quota, CodeAssistError
+            from hermes_cli.auth import AuthError, resolve_gemini_oauth_runtime_credentials
         except ImportError as exc:
             self._console_print(f"  [red]Gemini modules unavailable: {exc}[/]")
             return
 
         try:
-            access_token = get_valid_access_token()
-        except GoogleOAuthError as exc:
+            runtime = resolve_gemini_oauth_runtime_credentials()
+        except AuthError as exc:
             self._console_print(f"  [yellow]{exc}[/]")
             self._console_print("  Run [bold]/model[/] and pick 'Google Gemini (OAuth)' to sign in.")
             return
 
-        creds = load_credentials()
-        project_id = (creds.project_id if creds else "") or ""
+        access_token = runtime["api_key"]
+        project_id = runtime.get("project_id", "")
+        base_url = runtime["base_url"]
 
         try:
-            buckets = retrieve_user_quota(access_token, project_id=project_id)
+            buckets = retrieve_user_quota(
+                access_token, project_id=project_id, base_url=base_url
+            )
         except CodeAssistError as exc:
             self._console_print(f"  [red]Quota lookup failed:[/] {exc}")
             return
