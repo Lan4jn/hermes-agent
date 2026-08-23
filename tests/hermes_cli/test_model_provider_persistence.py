@@ -182,6 +182,62 @@ class TestProviderPersistsAfterModelSave:
 
 
 
+class TestGeminiUnifiedProxyOrigin:
+    def test_derives_all_required_endpoints(self):
+        from hermes_cli.model_setup_flows import _derive_gemini_proxy_endpoints
+
+        assert _derive_gemini_proxy_endpoints("https://proxy.example.test/") == {
+            "oauth_authorize_url": "https://proxy.example.test/o/oauth2/v2/auth",
+            "oauth_token_url": "https://proxy.example.test/token",
+            "oauth_userinfo_url": "https://proxy.example.test/oauth2/v1/userinfo",
+            "code_assist_base_url": "https://proxy.example.test",
+        }
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://remote.test",
+            "https://user@proxy.test",
+            "https://proxy.test/path",
+            "https://proxy.test?x=1",
+            "https://proxy.test#fragment",
+            "ftp://proxy.test",
+            " https://proxy.test",
+        ],
+    )
+    def test_rejects_unsafe_or_non_origin_urls(self, origin):
+        from agent.gemini_endpoints import GeminiEndpointConfigError
+        from hermes_cli.model_setup_flows import _derive_gemini_proxy_endpoints
+
+        with pytest.raises(GeminiEndpointConfigError):
+            _derive_gemini_proxy_endpoints(origin)
+
+    @pytest.mark.parametrize("origin", ["http://localhost:8080", "http://127.0.0.1"])
+    def test_accepts_loopback_http(self, origin):
+        from hermes_cli.model_setup_flows import _derive_gemini_proxy_endpoints
+
+        assert _derive_gemini_proxy_endpoints(origin)["code_assist_base_url"] == origin
+
+    def test_detects_only_exact_unified_endpoint_pattern(self):
+        from hermes_cli.model_setup_flows import (
+            _derive_gemini_proxy_endpoints,
+            _gemini_unified_proxy_origin,
+        )
+
+        endpoints = _derive_gemini_proxy_endpoints("https://proxy.example.test")
+        assert _gemini_unified_proxy_origin(endpoints) == "https://proxy.example.test"
+
+        endpoints["oauth_token_url"] = "https://other.example.test/token"
+        assert _gemini_unified_proxy_origin(endpoints) is None
+
+    def test_incomplete_endpoint_config_is_not_unified(self):
+        from hermes_cli.model_setup_flows import _gemini_unified_proxy_origin
+
+        assert _gemini_unified_proxy_origin(
+            {"code_assist_base_url": "https://proxy.example.test"}
+        ) is None
+
+
 class TestBaseUrlValidation:
     """Reject non-URL values in the base URL prompt (e.g. shell commands).
 

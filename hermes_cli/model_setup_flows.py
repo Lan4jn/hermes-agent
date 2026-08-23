@@ -40,6 +40,49 @@ BEDROCK_GEO_PREFIXES = (
     "us.", "eu.", "ap.", "apac.", "jp.", "ca.", "sa.", "me.", "af.",
 )
 
+GEMINI_ENDPOINT_KEYS = (
+    "oauth_authorize_url",
+    "oauth_token_url",
+    "oauth_userinfo_url",
+    "code_assist_base_url",
+)
+
+
+def _derive_gemini_proxy_endpoints(origin: str) -> dict[str, str]:
+    """Validate one proxy origin and derive every Gemini network endpoint."""
+    from agent.gemini_endpoints import (
+        GeminiEndpointConfigError,
+        normalize_code_assist_base_url,
+    )
+
+    normalized = normalize_code_assist_base_url(origin, field="proxy_origin")
+    parsed = urllib.parse.urlsplit(normalized)
+    if parsed.path:
+        raise GeminiEndpointConfigError("proxy_origin: must not include a path")
+    origin = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    return {
+        "oauth_authorize_url": f"{origin}/o/oauth2/v2/auth",
+        "oauth_token_url": f"{origin}/token",
+        "oauth_userinfo_url": f"{origin}/oauth2/v1/userinfo",
+        "code_assist_base_url": origin,
+    }
+
+
+def _gemini_unified_proxy_origin(provider_config: object) -> str | None:
+    """Return the origin only when all four overrides match our unified layout."""
+    if not isinstance(provider_config, dict):
+        return None
+    origin = provider_config.get("code_assist_base_url")
+    if not isinstance(origin, str):
+        return None
+    try:
+        expected = _derive_gemini_proxy_endpoints(origin)
+    except ValueError:
+        return None
+    return origin.rstrip("/") if all(
+        provider_config.get(key) == value for key, value in expected.items()
+    ) else None
+
 
 def bedrock_region_geo_prefix(region_name: str) -> str:
     """Map an AWS region name to its inference-profile geo prefix ('' = unknown)."""
