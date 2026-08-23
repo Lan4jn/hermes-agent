@@ -33,6 +33,21 @@ DEFAULT_CONFIG = {
     # sessions (no live client) so accumulated agents don't pile up under memory
     # pressure. Reopening one re-resumes it from disk. 0/null disables.
     "max_live_sessions": 16,
+    # Interactive chat backend routing. Cron and batch callers do not consume
+    # this setting and remain on the native Hermes agent.
+    "agent_backends": {
+        "default": "hermes",
+        "antigravity": {
+            "enabled": False,
+            "command": "agy",
+            "model": "",
+            "effort": "high",
+            "permission_mode": "strict",
+            "proxy_url": "",
+            "max_sessions": 8,
+            "idle_timeout_seconds": 1800,
+        },
+    },
     "session": {
         # Per-terminal `hermes -c`: each CLI session drops a breadcrumb file
         # under $HERMES_HOME/terminal-sessions/<terminal-id>, and a bare
