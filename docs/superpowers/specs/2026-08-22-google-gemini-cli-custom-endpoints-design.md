@@ -87,6 +87,53 @@ login and overwrites the stored Google grant after a successful exchange.
 Logout remains idempotent. A failed OAuth login does not delete the previously
 working credential until a replacement grant has been successfully persisted.
 
+## Interactive Model Flow
+
+The existing `hermes model` flow owns the interactive configuration entry. The
+new prompts appear only after the user selects `google-gemini-cli`; every other
+provider follows its existing branch byte-for-byte.
+
+The flow is:
+
+1. Ask whether to use `Google official endpoints` or `Custom reverse proxy`.
+2. Official mode removes only these four keys from
+   `providers.google-gemini-cli`:
+   `oauth_authorize_url`, `oauth_token_url`, `oauth_userinfo_url`, and
+   `code_assist_base_url`.
+3. Custom mode asks for one HTTPS origin, for example
+   `https://server.sjser.ccwu.cc`.
+4. The origin must not contain userinfo, a path other than `/`, query, fragment,
+   whitespace, or control characters. HTTP is accepted only for loopback.
+5. Derive and display the four final endpoints:
+
+   - `<origin>/o/oauth2/v2/auth`
+   - `<origin>/token`
+   - `<origin>/oauth2/v1/userinfo`
+   - `<origin>` for Code Assist
+
+6. Require confirmation, persist the endpoint selection, and only then start
+   the existing OAuth login and model picker.
+
+Custom mode is all-or-nothing: all four derived fields are written together, so
+no OAuth or Code Assist request silently returns to an official Google host.
+Choosing official mode restores resolver defaults by deleting the override keys
+rather than copying official URLs into user configuration.
+
+If the profile already contains the exact unified-origin pattern, the prompt
+uses that origin as its editable default. If it contains four independently
+configured endpoints that cannot be represented by the unified pattern, the
+flow explains that confirming a new origin will replace only those four Google
+Gemini endpoint fields. Cancellation leaves configuration and credentials
+unchanged.
+
+Configuration writes preserve all unrelated mappings and comments. In
+particular, the flow must not modify:
+
+- Any provider other than `providers.google-gemini-cli`.
+- Other keys under `providers.google-gemini-cli`.
+- `model.provider` or `model.model` before OAuth and model selection succeed.
+- API keys, fallback providers, auxiliary models, tools, platforms, or secrets.
+
 ## Security Boundaries
 
 Custom OAuth/token endpoints receive sensitive OAuth material. The CLI and
@@ -125,6 +172,14 @@ Tests must prove:
 - `auth add` forces re-login and `auth logout` deletes the actual Google OAuth
   credential file.
 - Existing Gemini API-key/native/custom-proxy provider behavior is unchanged.
+- `hermes model` official/custom selection is available only for
+  `google-gemini-cli`.
+- A unified origin derives exactly the four documented paths and persists them
+  without changing unrelated provider/model configuration.
+- Official mode removes only the four endpoint override keys.
+- Existing unified configuration is prefilled; independent endpoint config is
+  not silently overwritten; cancellation performs no write.
+- Invalid origins fail before config persistence or OAuth startup.
 
 Run focused OAuth, Cloud Code, provider-routing, auth-command, and model-setup
 tests, followed by the relevant regression suites and static checks.
