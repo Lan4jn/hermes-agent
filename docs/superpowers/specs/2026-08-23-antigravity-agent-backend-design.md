@@ -273,10 +273,12 @@ Trusted messaging principals are the existing platform allowlist identities.
 An allowlisted QQBot or Telegram user may use a trusted Antigravity backend.
 Untrusted platform users cannot select or invoke it.
 
-For `/message`, an Antigravity turn in `trusted` mode requires a valid
-`API_SERVER_KEY` bearer/header/body credential or an unexpired token derived
-from that key. An unauthenticated text message receives 401 before a process is
-started. The existing explicit command-execution gate remains unchanged.
+For `/message`, every Antigravity turn requires a valid `API_SERVER_KEY`
+bearer/header/body credential or an unexpired token derived from that key,
+regardless of Antigravity permission mode. `strict` can still allow workspace
+file operations, so it is not a safe substitute for caller authentication. An
+unauthenticated text message receives 401 before a process is started. The
+existing explicit command-execution gate remains unchanged.
 
 The Antigravity child inherits the gateway service account. On host 130 that
 currently means root. Setup and status output must warn explicitly when trusted
@@ -394,7 +396,8 @@ Coverage includes:
 - Dynamic model catalog selection from fake `agy models` output.
 - `strict`, `sandbox`, and authorized `trusted` argument construction.
 - QQBot/Telegram allowlist authorization.
-- `/message` 401 before process creation without `API_SERVER_KEY`.
+- `/message` 401 before process creation without `API_SERVER_KEY`, in every
+  Antigravity permission mode.
 - Backend resolution order and `/backend` persistence.
 - Classic CLI, TUI gateway, desktop command discovery, and gateway dispatch.
 - Native Hermes behavior remains unchanged when Hermes is effective.
