@@ -99,6 +99,44 @@ def main() -> int:
             status = text.partition(":")[2]
             emit({"event": "result", "status": status, "response": "nope"})
             continue
+        if text == "STATUS_SECRET":
+            emit(
+                {
+                    "event": "result",
+                    "status": "api_key=STATUS_SECRET_MARKER_1234567890",
+                    "response": "nope",
+                }
+            )
+            continue
+
+        if text == "DELTA_SEMANTICS":
+            for step_index, status, delta in (
+                (0, "ACTIVE", "a"),
+                (0, "ACTIVE", "ab"),
+                (0, "DONE", "aab"),
+                (1, "ACTIVE", "next"),
+                (1, "DONE", "\n"),
+            ):
+                emit(
+                    {
+                        "event": "step_update",
+                        "step": {
+                            "step_index": step_index,
+                            "type": "agent_response",
+                            "status": status,
+                            "text_delta": delta,
+                        },
+                    }
+                )
+            emit(
+                {
+                    "event": "result",
+                    "status": "SUCCESS",
+                    "response": "aabnext\n",
+                    "usage": {},
+                }
+            )
+            continue
 
         if text == "UNKNOWN_EVENT":
             emit({"event": "future_protocol_event", "payload": "ignored"})
@@ -127,9 +165,10 @@ def main() -> int:
             {
                 "event": "step_update",
                 "step": {
+                    "step_index": 0,
                     "type": "agent_response",
                     "status": "ACTIVE",
-                    "message": response[:6],
+                    "text_delta": response[:6],
                 },
             }
         )
@@ -137,9 +176,21 @@ def main() -> int:
             {
                 "event": "step_update",
                 "step": {
+                    "step_index": 0,
+                    "type": "agent_response",
+                    "status": "ACTIVE",
+                    "text_delta": response[6:],
+                },
+            }
+        )
+        emit(
+            {
+                "event": "step_update",
+                "step": {
+                    "step_index": 0,
                     "type": "agent_response",
                     "status": "DONE",
-                    "message": response,
+                    "text_delta": response,
                 },
             }
         )
@@ -151,6 +202,8 @@ def main() -> int:
                 "usage": {"input_tokens": len(text), "output_tokens": len(response)},
             }
         )
+        if text == "EXIT_AFTER_RESULT":
+            return 0
     return 0
 
 

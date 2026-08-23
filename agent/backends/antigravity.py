@@ -23,6 +23,7 @@ _STDOUT_LINE_LIMIT = 16_384
 _STDERR_LINE_LIMIT = 4_096
 _TOOL_PART_LIMIT = 1_000
 _FAILED_STATUSES = {"ERROR", "CANCELED", "INTERRUPTED", "INVALID", "WAITING", "RUNNING"}
+_TERMINAL_STATUSES = _FAILED_STATUSES | {"SUCCESS"}
 _OAUTH_SECRET_RE = re.compile(
     r"(?i)(\boauth[_-]?(?:(?:access|refresh)[_-]?)?token\b\s*(?:=|:\s*)[\"']?)[^\s,\"'}]+"
 )
@@ -51,10 +52,13 @@ class AntigravitySession:
         self._process: subprocess.Popen[bytes] | None = None
         self._stdout_events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._stderr_tail: deque[str] = deque(maxlen=40)
+        self._stderr_lock = threading.Lock()
         self._turn_lock = threading.Lock()
         self._process_lock = threading.Lock()
         self._effective_metadata: dict[str, Any] = {}
-        self._unusable = False
+        self._started = False
+        self._fatal = False
+        self._closed = False
 
     @property
     def pid(self) -> int | None:
@@ -77,8 +81,8 @@ class AntigravitySession:
             raise PermissionError("trusted Antigravity mode requires an authorized request")
 
         with self._turn_lock:
-            if self._unusable:
-                raise RuntimeError("terminated Antigravity session cannot be reused")
+            if self._fatal or self._closed:
+                raise self._error("terminated Antigravity session cannot be reused")
             deadline = time.monotonic() + self._timeout_seconds
             try:
                 process = self._ensure_process(deadline)
@@ -92,17 +96,27 @@ class AntigravitySession:
                 )
                 process.stdin.flush()
                 return self._read_turn(events, deadline)
-            except (BrokenPipeError, OSError) as exc:
+            except (BrokenPipeError, OSError):
+                self._fatal = True
+                message = self._failure_message("Antigravity transport failed")
                 self._abort_process()
-                raise RuntimeError(self._failure_message(f"Antigravity transport failed: {exc}")) from None
+                raise RuntimeError(message) from None
             except Exception:
+                self._fatal = True
                 self._abort_process()
                 raise
 
     def _ensure_process(self, deadline: float) -> subprocess.Popen[bytes]:
         with self._process_lock:
-            if self._process is not None and self._process.poll() is None:
-                return self._process
+            if self._process is not None:
+                if self._process.poll() is None:
+                    return self._process
+                self._process = None
+                self._fatal = True
+                raise self._error("terminated Antigravity session cannot be reused")
+            if self._started:
+                self._fatal = True
+                raise self._error("terminated Antigravity session cannot be reused")
 
             argv = split_command_line(self._config.command)
             argv.extend(
@@ -129,7 +143,8 @@ class AntigravitySession:
                 for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
                     env[key] = self._config.proxy_url
             self._stdout_events = queue.Queue()
-            self._stderr_tail.clear()
+            with self._stderr_lock:
+                self._stderr_tail.clear()
             self._process = subprocess.Popen(
                 argv,
                 cwd=self._cwd,
@@ -140,14 +155,15 @@ class AntigravitySession:
                 creationflags=windows_hide_flags(),
             )
             process = self._process
+            self._started = True
 
         self._start_readers(process)
         init = self._next_json(deadline)
         if init.get("event") != "init":
-            raise RuntimeError("Antigravity protocol did not begin with init")
+            raise self._error("Antigravity protocol did not begin with init")
         conversation_id = init.get("conversation_id")
         if not isinstance(conversation_id, str) or not conversation_id:
-            raise RuntimeError("Antigravity init omitted conversation_id")
+            raise self._error("Antigravity init omitted conversation_id")
         self._conversation_id = conversation_id
         self._effective_metadata = {
             key: value for key, value in init.items() if key not in {"event", "conversation_id"}
@@ -204,32 +220,38 @@ class AntigravitySession:
                 if len(text) > _STDERR_LINE_LIMIT:
                     self._stdout_events.put(("error", "Antigravity stderr line exceeded limit"))
                     return
-                self._stderr_tail.append(text)
+                try:
+                    safe_text = _redact_process_text(text)[:_STDERR_LINE_LIMIT]
+                except Exception:
+                    safe_text = "[stderr redaction failed]"
+                with self._stderr_lock:
+                    self._stderr_tail.append(safe_text)
         finally:
             pipe.close()
 
     def _next_json(self, deadline: float) -> dict[str, Any]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise RuntimeError(self._failure_message("Antigravity turn timed out"))
+            raise self._error("Antigravity turn timed out")
         try:
             kind, value = self._stdout_events.get(timeout=remaining)
         except queue.Empty:
-            raise RuntimeError(self._failure_message("Antigravity turn timed out")) from None
+            raise self._error("Antigravity turn timed out") from None
         if kind == "error":
-            raise RuntimeError(self._failure_message(value))
+            raise self._error(value)
         if kind == "eof":
-            raise RuntimeError(self._failure_message("Antigravity process exited early"))
+            raise self._error("Antigravity process exited early")
         try:
             payload = json.loads(value)
         except json.JSONDecodeError:
-            raise RuntimeError(self._failure_message("Antigravity emitted malformed JSON")) from None
+            raise self._error("Antigravity emitted malformed JSON") from None
         if not isinstance(payload, dict):
-            raise RuntimeError("Antigravity protocol event must be an object")
+            raise self._error("Antigravity protocol event must be an object")
         return payload
 
     def _read_turn(self, events: BackendEventSink, deadline: float) -> BackendTurnResult:
-        emitted = ""
+        step_text: dict[tuple[type, Any], str] = {}
+        response_parts: list[str] = []
         while True:
             payload = self._next_json(deadline)
             event_type = payload.get("event")
@@ -239,45 +261,48 @@ class AntigravitySession:
                     continue
                 step_type = step.get("type")
                 if step_type == "agent_response":
-                    message = self._message_text(step.get("message"))
-                    if message.startswith(emitted):
-                        delta = message[len(emitted):]
-                        emitted = message
-                    elif emitted.startswith(message):
+                    delta = step.get("text_delta", "")
+                    if not isinstance(delta, str):
+                        continue
+                    raw_step_index = step.get("step_index")
+                    if not isinstance(raw_step_index, (int, str)):
+                        raw_step_index = "default"
+                    step_index = (type(raw_step_index), raw_step_index)
+                    status = step.get("status")
+                    accumulated = step_text.get(step_index, "")
+                    if status == "DONE" and delta == accumulated:
                         delta = ""
-                    else:
-                        delta = message
-                        emitted += message
                     if delta:
-                        events(BackendEvent(kind="message_delta", text=delta, status=str(step.get("status", ""))))
+                        step_text[step_index] = accumulated + delta
+                        response_parts.append(delta)
+                        events(
+                            BackendEvent(
+                                kind="message_delta",
+                                text=delta,
+                                status=status if isinstance(status, str) else "",
+                            )
+                        )
                 elif step_type == "tool":
                     events(self._tool_event(step))
                 continue
             if event_type != "result":
                 continue
 
-            status = str(payload.get("status", ""))
+            status = payload.get("status")
+            if not isinstance(status, str) or status not in _TERMINAL_STATUSES:
+                raise self._error("Antigravity invalid terminal status")
             if status != "SUCCESS":
-                label = status if status in _FAILED_STATUSES else status or "missing"
-                raise RuntimeError(self._failure_message(f"Antigravity result status {label}"))
-            response = payload.get("response", emitted)
+                raise self._error(f"Antigravity result status {status}")
+            response = payload.get("response", "".join(response_parts))
             usage = payload.get("usage", {})
             if not isinstance(response, str) or not isinstance(usage, dict):
-                raise RuntimeError("Antigravity SUCCESS result had invalid fields")
+                raise self._error("Antigravity SUCCESS result had invalid fields")
             return BackendTurnResult(
                 response=response,
                 conversation_id=self._conversation_id,
                 usage=usage,
                 status=status,
             )
-
-    @staticmethod
-    def _message_text(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, dict) and isinstance(value.get("content"), str):
-            return value["content"]
-        return ""
 
     @staticmethod
     def _tool_event(step: dict[str, Any]) -> BackendEvent:
@@ -298,62 +323,90 @@ class AntigravitySession:
         )
 
     def _failure_message(self, reason: str) -> str:
-        tail = "\n".join(self._stderr_tail)
+        with self._stderr_lock:
+            tail = "\n".join(self._stderr_tail)
         if not tail:
             return reason
-        try:
-            tail = _redact_process_text(tail)
-        except Exception:
-            tail = "[stderr redaction failed]"
         return f"{reason}; stderr tail: {tail[:4096]}"
+
+    def _error(self, reason: str) -> RuntimeError:
+        return RuntimeError(self._failure_message(reason))
 
     def interrupt(self) -> bool:
         with self._process_lock:
             process = self._process
-        if process is None or process.poll() is not None:
+        if process is None:
             return False
+        if process.poll() is not None:
+            self._clear_exited_process(process)
+            self._fatal = True
+            self._closed = True
+            return False
+        self._fatal = True
         self._abort_process()
+        self._closed = True
         return True
 
     def close(self) -> None:
-        self._unusable = True
         with self._process_lock:
             process = self._process
         if process is None:
+            self._closed = True
             return
+        self._fatal = True
         if process.stdin is not None:
             try:
                 process.stdin.close()
             except OSError:
                 pass
-        self._finish_process(process)
+        self._finish_process(process, wait_first=True)
+        self._closed = True
 
     def _abort_process(self) -> None:
-        self._unusable = True
+        self._fatal = True
         with self._process_lock:
             process = self._process
         if process is None:
+            return
+        self._finish_process(process, wait_first=False)
+
+    def _finish_process(
+        self, process: subprocess.Popen[bytes], *, wait_first: bool
+    ) -> None:
+        if wait_first and self._wait_for_exit(process):
+            self._clear_exited_process(process)
             return
         if process.poll() is None:
             try:
                 process.terminate()
             except OSError:
                 pass
-        self._finish_process(process)
+        if self._wait_for_exit(process):
+            self._clear_exited_process(process)
+            return
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        if self._wait_for_exit(process):
+            self._clear_exited_process(process)
+            return
+        if process.poll() is None:
+            raise self._error("Antigravity process could not be terminated")
+        self._clear_exited_process(process)
 
-    def _finish_process(self, process: subprocess.Popen[bytes]) -> None:
+    @staticmethod
+    def _wait_for_exit(process: subprocess.Popen[bytes]) -> bool:
         try:
             process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            try:
-                process.terminate()
-                process.wait(timeout=0.5)
-            except (OSError, subprocess.TimeoutExpired):
-                try:
-                    process.kill()
-                    process.wait(timeout=0.5)
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
+        except (OSError, subprocess.TimeoutExpired):
+            return process.poll() is not None
+        return process.poll() is not None
+
+    def _clear_exited_process(self, process: subprocess.Popen[bytes]) -> None:
+        if process.poll() is None:
+            raise self._error("Antigravity process is still running")
         with self._process_lock:
             if self._process is process:
                 self._process = None

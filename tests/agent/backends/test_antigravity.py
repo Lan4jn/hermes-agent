@@ -68,6 +68,49 @@ def test_multi_turn_reuses_process_conversation_and_emits_only_new_deltas():
         first.usage["input_tokens"] = 99
 
 
+def test_exited_process_is_not_respawned_between_turns(monkeypatch):
+    import agent.backends.antigravity as module
+
+    real_popen = module.subprocess.Popen
+    spawns = []
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawns.append(process.pid)
+        return process
+
+    monkeypatch.setattr(module.subprocess, "Popen", recording_popen)
+    session = AntigravitySession(config(), cwd=str(Path.cwd()))
+    first = session.run_turn(request("EXIT_AFTER_RESULT"), lambda _event: None)
+    deadline = time.monotonic() + 2
+    while session.pid is not None and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    with pytest.raises(RuntimeError, match="cannot be reused"):
+        session.run_turn(request("second"), lambda _event: None)
+
+    assert first.response == "reply:EXIT_AFTER_RESULT"
+    assert len(spawns) == 1
+    session.close()
+
+
+def test_text_delta_is_incremental_and_done_dedupes_only_same_step_full_text():
+    events = []
+    session = AntigravitySession(config(), cwd=str(Path.cwd()))
+    try:
+        result = session.run_turn(request("DELTA_SEMANTICS"), events.append)
+    finally:
+        session.close()
+
+    assert result.response == "aabnext\n"
+    assert [event.text for event in events if event.kind == "message_delta"] == [
+        "a",
+        "ab",
+        "next",
+        "\n",
+    ]
+
+
 def test_stdin_is_utf8_text_only_and_unknown_events_are_ignored():
     unicode_text = chr(0x4F60) + chr(0x597D)
     session = AntigravitySession(config(), cwd=str(Path.cwd()))
@@ -173,6 +216,20 @@ def test_non_success_result_status_fails_and_closes(status):
     assert session.pid is None
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    ["STATUS:" + "x" * 8000, "STATUS_SECRET"],
+)
+def test_unknown_status_is_bounded_and_does_not_leak(prompt):
+    session = AntigravitySession(config(), cwd=str(Path.cwd()))
+    with pytest.raises(RuntimeError) as exc_info:
+        session.run_turn(request(prompt), lambda _event: None)
+    message = str(exc_info.value)
+    assert "invalid terminal status" in message
+    assert len(message) < 5000
+    assert "STATUS_SECRET_MARKER" not in message
+
+
 @pytest.mark.parametrize("prompt", ["EXIT", "SECRET_EXIT", "TIMEOUT"])
 def test_exit_and_timeout_errors_have_bounded_redacted_stderr(prompt):
     session = AntigravitySession(config(), cwd=str(Path.cwd()), timeout_seconds=0.3)
@@ -186,6 +243,16 @@ def test_exit_and_timeout_errors_have_bounded_redacted_stderr(prompt):
     assert session.pid is None
 
 
+def test_stderr_tail_never_retains_raw_secrets():
+    session = AntigravitySession(config(), cwd=str(Path.cwd()), timeout_seconds=1)
+    with pytest.raises(RuntimeError):
+        session.run_turn(request("SECRET_EXIT"), lambda _event: None)
+    tail = "\n".join(session._stderr_tail)
+    assert "PROXY_SECRET_MARKER" not in tail
+    assert "OAUTH_SECRET_MARKER" not in tail
+    assert "sk-" + "a" * 32 not in tail
+
+
 def test_close_is_idempotent_and_reaps_process():
     session = AntigravitySession(config(), cwd=str(Path.cwd()))
     session.run_turn(request(), lambda _event: None)
@@ -196,6 +263,45 @@ def test_close_is_idempotent_and_reaps_process():
     if os.name != "nt":
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
+
+
+class _FailingProcess:
+    pid = 42
+    stdin = None
+
+    def __init__(self):
+        self.terminate_calls = 0
+        self.kill_calls = 0
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout):
+        raise subprocess.TimeoutExpired("agy", timeout)
+
+    def terminate(self):
+        self.terminate_calls += 1
+        raise OSError("terminate failed")
+
+    def kill(self):
+        self.kill_calls += 1
+        raise OSError("kill failed api_key=KILL_SECRET_MARKER_1234567890")
+
+
+def test_close_retains_live_process_and_raises_when_kill_fails():
+    session = AntigravitySession(config(), cwd=str(Path.cwd()))
+    process = _FailingProcess()
+    session._process = process
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session.close()
+
+    assert session._process is process
+    assert session._closed is False
+    assert session.pid == process.pid
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert "KILL_SECRET_MARKER" not in str(exc_info.value)
 
 
 def test_interrupt_terminates_active_process_without_orphan():
