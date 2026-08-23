@@ -78,16 +78,45 @@ def test_antigravity_rejects_invalid_permission_mode(permission_mode):
         "http://user:password@proxy.example:8080",
         "http://proxy.example:8080?token=secret",
         "http://proxy.example:8080#fragment",
+        "http://proxy.example?",
+        "http://proxy.example#",
+        "http://proxy.example:bad",
+        "http://proxy.example:99999",
+        "http://proxy host.example:8080",
+        "http://proxy.example\\path",
         "http://proxy.example:8080\nheader: injected",
+        "http://proxy.example:\x80",
+        "http://proxy\u2003.example:8080",
+        "http://[malformed:8080",
         " http://proxy.example:8080",
         "http://proxy.example:8080 ",
     ],
 )
 def test_antigravity_rejects_unsafe_proxy_urls(proxy_url):
-    with pytest.raises(ValueError, match=r"proxy_url.*HTTP\(S\).*(host|userinfo)"):
+    with pytest.raises(ValueError, match="proxy_url"):
         parse_antigravity_config(
             {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
         )
+
+
+def test_antigravity_rejects_overlong_proxy_url():
+    proxy_url = "https://proxy.example/" + "a" * 4096
+
+    with pytest.raises(ValueError, match="proxy_url.*too long"):
+        parse_antigravity_config(
+            {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
+        )
+
+
+def test_antigravity_accepts_proxy_url_at_length_limit():
+    prefix = "https://proxy.example/"
+    proxy_url = prefix + "a" * (4096 - len(prefix))
+
+    parsed = parse_antigravity_config(
+        {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
+    )
+
+    assert parsed.proxy_url == proxy_url
 
 
 @pytest.mark.parametrize(
@@ -117,8 +146,11 @@ def test_proxy_display_omits_path_that_may_contain_credentials():
     assert parsed.proxy_display == "https://proxy.example:8443"
 
 
-def test_proxy_env_reference_is_expanded_only_in_memory(tmp_path, monkeypatch, caplog):
-    proxy_url = "https://proxy.internal.example:8443"
+def test_proxy_env_secret_is_rejected_without_log_or_error_leak(
+    tmp_path, monkeypatch, caplog
+):
+    secret_marker = "ANTIGRAVITY_PROXY_SECRET_7f31"
+    proxy_url = f"https://proxy-user:{secret_marker}@proxy.internal.example:8443"
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "agent_backends:\n"
@@ -130,11 +162,13 @@ def test_proxy_env_reference_is_expanded_only_in_memory(tmp_path, monkeypatch, c
     monkeypatch.setenv("ANTIGRAVITY_PROXY_URL", proxy_url)
 
     loaded = load_config()
-    parsed = parse_antigravity_config(loaded)
+    with pytest.raises(ValueError) as exc_info:
+        parse_antigravity_config(loaded)
 
-    assert parsed.proxy_url == proxy_url
+    assert loaded["agent_backends"]["antigravity"]["proxy_url"] == proxy_url
     assert "${ANTIGRAVITY_PROXY_URL}" in config_path.read_text(encoding="utf-8")
-    assert proxy_url not in caplog.text
+    assert secret_marker not in str(exc_info.value)
+    assert secret_marker not in caplog.text
 
 
 def test_backend_contracts_are_immutable_and_contain_only_transport_facts():

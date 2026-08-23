@@ -1,5 +1,6 @@
 """Configuration parsing for interactive agent backends."""
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -7,6 +8,7 @@ from urllib.parse import urlsplit
 
 _BACKENDS = ("hermes", "antigravity")
 _PERMISSION_MODES = ("strict", "sandbox", "trusted")
+_MAX_PROXY_URL_CHARS = 4096
 
 
 @dataclass(frozen=True)
@@ -65,29 +67,44 @@ def resolve_backend(
 def _validate_proxy_url(value: Any) -> tuple[str, str]:
     if value in (None, ""):
         return "", ""
-    message = (
-        "proxy_url must be an HTTP(S) URL with a host and no userinfo, query, "
-        "fragment, control characters, or surrounding whitespace"
-    )
-    if not isinstance(value, str) or value != value.strip() or any(
-        ord(char) < 32 or ord(char) == 127 for char in value
+    if not isinstance(value, str):
+        raise ValueError("proxy_url: must be a URL string")
+    if len(value) > _MAX_PROXY_URL_CHARS:
+        raise ValueError("proxy_url: URL is too long")
+    if value != value.strip():
+        raise ValueError("proxy_url: surrounding whitespace is not allowed")
+    if any(
+        ord(char) < 0x20
+        or ord(char) == 0x7F
+        or char.isspace()
+        or unicodedata.category(char) == "Cc"
+        for char in value
     ):
-        raise ValueError(message)
+        raise ValueError(
+            "proxy_url: whitespace and control characters are not allowed"
+        )
+    if "\\" in value:
+        raise ValueError("proxy_url: backslashes are not allowed")
+    if "?" in value:
+        raise ValueError("proxy_url: query strings are not allowed")
+    if "#" in value:
+        raise ValueError("proxy_url: fragments are not allowed")
+
     try:
         parsed = urlsplit(value)
-        valid = (
-            parsed.scheme in {"http", "https"}
-            and parsed.hostname is not None
-            and parsed.username is None
-            and parsed.password is None
-            and not parsed.query
-            and not parsed.fragment
-        )
+        hostname = parsed.hostname
+        parsed.port  # Validate malformed and out-of-range ports.
     except ValueError:
-        valid = False
-    if not valid:
-        raise ValueError(message)
-    return value, f"{parsed.scheme}://{parsed.netloc}"
+        raise ValueError("proxy_url: malformed URL") from None
+
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError("proxy_url: scheme must be http or https")
+    if not hostname:
+        raise ValueError("proxy_url: URL must include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("proxy_url: credentials are not allowed")
+    return value, f"{scheme}://{parsed.netloc}"
 
 
 def parse_antigravity_config(config: Mapping[str, Any]) -> AntigravityConfig:
