@@ -238,6 +238,82 @@ class TestGeminiUnifiedProxyOrigin:
         ) is None
 
 
+class TestGeminiEndpointPersistence:
+    def test_custom_mode_changes_only_four_endpoint_fields(self, config_home):
+        from hermes_cli.model_setup_flows import (
+            _derive_gemini_proxy_endpoints,
+            _save_gemini_endpoint_overrides,
+        )
+
+        config_path = config_home / "config.yaml"
+        config_path.write_text(
+            """# keep root comment
+model:
+  default: old-model
+  provider: openrouter
+providers:
+  openrouter:
+    api_key: keep
+  google-gemini-cli:
+    account: keep
+    oauth_token_url: https://old.example.test/token
+tools:
+  keep: true
+""",
+            encoding="utf-8",
+        )
+
+        endpoints = _derive_gemini_proxy_endpoints("https://proxy.example.test")
+        _save_gemini_endpoint_overrides(endpoints)
+
+        import yaml
+
+        text = config_path.read_text(encoding="utf-8")
+        saved = yaml.safe_load(text)
+        assert "# keep root comment" in text
+        assert saved["model"] == {"default": "old-model", "provider": "openrouter"}
+        assert saved["providers"]["openrouter"] == {"api_key": "keep"}
+        assert saved["providers"]["google-gemini-cli"] == {
+            "account": "keep",
+            **endpoints,
+        }
+        assert saved["tools"] == {"keep": True}
+
+    def test_official_mode_removes_only_endpoint_fields(self, config_home):
+        from hermes_cli.model_setup_flows import _save_gemini_endpoint_overrides
+
+        config_path = config_home / "config.yaml"
+        config_path.write_text(
+            """model: old-model
+providers:
+  google-gemini-cli:
+    account: keep
+    oauth_authorize_url: https://proxy.test/auth
+    oauth_token_url: https://proxy.test/token
+    oauth_userinfo_url: https://proxy.test/userinfo
+    code_assist_base_url: https://proxy.test
+  openrouter:
+    enabled: true
+fallback_model: keep-me
+""",
+            encoding="utf-8",
+        )
+
+        _save_gemini_endpoint_overrides(None)
+
+        import yaml
+
+        saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert saved == {
+            "model": "old-model",
+            "providers": {
+                "google-gemini-cli": {"account": "keep"},
+                "openrouter": {"enabled": True},
+            },
+            "fallback_model": "keep-me",
+        }
+
+
 class TestBaseUrlValidation:
     """Reject non-URL values in the base URL prompt (e.g. shell commands).
 

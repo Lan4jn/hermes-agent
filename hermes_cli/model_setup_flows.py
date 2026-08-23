@@ -84,6 +84,31 @@ def _gemini_unified_proxy_origin(provider_config: object) -> str | None:
     ) else None
 
 
+def _save_gemini_endpoint_overrides(
+    endpoints: dict[str, str] | None,
+) -> None:
+    """Atomically replace only the four Gemini endpoint override fields."""
+    from hermes_cli.config import get_config_path, read_user_config_raw
+    from utils import atomic_roundtrip_yaml_save
+
+    config_path = get_config_path()
+    config = read_user_config_raw(config_path)
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        config["providers"] = providers
+    provider_config = providers.get("google-gemini-cli")
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+        providers["google-gemini-cli"] = provider_config
+
+    for key in GEMINI_ENDPOINT_KEYS:
+        provider_config.pop(key, None)
+    if endpoints is not None:
+        provider_config.update({key: endpoints[key] for key in GEMINI_ENDPOINT_KEYS})
+    atomic_roundtrip_yaml_save(config_path, config)
+
+
 def bedrock_region_geo_prefix(region_name: str) -> str:
     """Map an AWS region name to its inference-profile geo prefix ('' = unknown)."""
     r = (region_name or "").lower()
