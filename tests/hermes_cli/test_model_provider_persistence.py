@@ -117,6 +117,10 @@ class TestProviderPersistsAfterModelSave:
         from hermes_cli.config import load_config
 
         with patch(
+            "hermes_cli.model_setup_flows._configure_gemini_endpoints_interactively",
+            side_effect=lambda config: config,
+            create=True,
+        ), patch(
             "hermes_cli.auth.get_gemini_oauth_auth_status",
             return_value={"logged_in": True, "email": "user@example.com"},
         ), patch(
@@ -162,6 +166,10 @@ class TestProviderPersistsAfterModelSave:
         config = load_config()
 
         with patch(
+            "hermes_cli.model_setup_flows._configure_gemini_endpoints_interactively",
+            side_effect=lambda current: current,
+            create=True,
+        ), patch(
             "hermes_cli.auth.get_gemini_oauth_auth_status", return_value={"logged_in": True},
         ), patch(
             "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
@@ -312,6 +320,189 @@ fallback_model: keep-me
             },
             "fallback_model": "keep-me",
         }
+
+    def test_official_mode_without_overrides_is_a_noop(self, config_home):
+        from hermes_cli.model_setup_flows import _save_gemini_endpoint_overrides
+
+        config_path = config_home / "config.yaml"
+        original = "# unchanged\nmodel: old-model\n"
+        config_path.write_text(original, encoding="utf-8")
+
+        _save_gemini_endpoint_overrides(None)
+
+        assert config_path.read_text(encoding="utf-8") == original
+
+
+class TestGeminiEndpointInteractiveFlow:
+    def test_custom_proxy_saves_before_oauth(self, config_home):
+        from hermes_cli.config import load_config
+        from hermes_cli.main import _model_flow_google_gemini_cli
+
+        events = []
+        with patch(
+            "hermes_cli.main._prompt_provider_choice", return_value=1,
+        ), patch(
+            "hermes_cli.model_setup_flows.line_input",
+            return_value="https://proxy.example.test",
+        ), patch(
+            "hermes_cli.model_setup_flows.prompt_yes_no", return_value=True, create=True,
+        ), patch(
+            "hermes_cli.model_setup_flows._save_gemini_endpoint_overrides",
+            side_effect=lambda endpoints: events.append(("save", endpoints)),
+        ), patch(
+            "hermes_cli.auth.get_gemini_oauth_auth_status", return_value={"logged_in": False},
+        ), patch(
+            "agent.google_oauth.resolve_project_id_from_env", return_value=None,
+        ), patch(
+            "agent.google_oauth.start_oauth_flow",
+            side_effect=lambda **kwargs: events.append(("oauth", kwargs)),
+        ), patch(
+            "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+            return_value={"project_id": "project-1"},
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection", return_value=None,
+        ):
+            _model_flow_google_gemini_cli(load_config(), "old-model")
+
+        assert events[0] == (
+            "save",
+            {
+                "oauth_authorize_url": "https://proxy.example.test/o/oauth2/v2/auth",
+                "oauth_token_url": "https://proxy.example.test/token",
+                "oauth_userinfo_url": "https://proxy.example.test/oauth2/v1/userinfo",
+                "code_assist_base_url": "https://proxy.example.test",
+            },
+        )
+        assert events[1][0] == "oauth"
+
+    @pytest.mark.parametrize(
+        ("choice", "origin", "confirmed"),
+        [
+            (None, "https://proxy.example.test", True),
+            (1, "not-a-url", True),
+            (1, "https://proxy.example.test", False),
+        ],
+    )
+    def test_cancel_or_invalid_input_does_not_write_or_login(
+        self, config_home, choice, origin, confirmed,
+    ):
+        from hermes_cli.config import load_config
+        from hermes_cli.main import _model_flow_google_gemini_cli
+
+        with patch(
+            "hermes_cli.main._prompt_provider_choice", return_value=choice,
+        ), patch(
+            "hermes_cli.model_setup_flows.line_input", return_value=origin,
+        ), patch(
+            "hermes_cli.model_setup_flows.prompt_yes_no", return_value=confirmed, create=True,
+        ), patch(
+            "hermes_cli.model_setup_flows._save_gemini_endpoint_overrides",
+        ) as save, patch(
+            "agent.google_oauth.start_oauth_flow",
+        ) as oauth:
+            _model_flow_google_gemini_cli(load_config(), "old-model")
+
+        save.assert_not_called()
+        oauth.assert_not_called()
+
+    def test_official_mode_removes_overrides_before_oauth(self, config_home):
+        from hermes_cli.config import load_config
+        from hermes_cli.main import _model_flow_google_gemini_cli
+
+        events = []
+        with patch(
+            "hermes_cli.main._prompt_provider_choice", return_value=0,
+        ), patch(
+            "hermes_cli.model_setup_flows.prompt_yes_no", return_value=True, create=True,
+        ), patch(
+            "hermes_cli.model_setup_flows._save_gemini_endpoint_overrides",
+            side_effect=lambda endpoints: events.append(("save", endpoints)),
+        ), patch(
+            "hermes_cli.auth.get_gemini_oauth_auth_status", return_value={"logged_in": False},
+        ), patch(
+            "agent.google_oauth.resolve_project_id_from_env", return_value=None,
+        ), patch(
+            "agent.google_oauth.start_oauth_flow",
+            side_effect=lambda **kwargs: events.append(("oauth", kwargs)),
+        ), patch(
+            "hermes_cli.auth.resolve_gemini_oauth_runtime_credentials",
+            return_value={"project_id": "project-1"},
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection", return_value=None,
+        ):
+            _model_flow_google_gemini_cli(load_config(), "old-model")
+
+        assert events[0] == ("save", None)
+        assert events[1][0] == "oauth"
+
+    def test_existing_unified_config_prefills_origin(self, config_home):
+        from hermes_cli.model_setup_flows import (
+            _configure_gemini_endpoints_interactively,
+            _derive_gemini_proxy_endpoints,
+        )
+
+        config = {
+            "providers": {
+                "google-gemini-cli": _derive_gemini_proxy_endpoints(
+                    "https://proxy.example.test"
+                )
+            }
+        }
+        prompts = []
+
+        def answer(prompt):
+            prompts.append(prompt)
+            return ""
+
+        with patch(
+            "hermes_cli.main._prompt_provider_choice", return_value=1,
+        ), patch(
+            "hermes_cli.model_setup_flows.line_input", side_effect=answer,
+        ), patch(
+            "hermes_cli.model_setup_flows.prompt_yes_no", return_value=True, create=True,
+        ), patch(
+            "hermes_cli.model_setup_flows._save_gemini_endpoint_overrides",
+        ) as save:
+            result = _configure_gemini_endpoints_interactively(config)
+
+        assert "https://proxy.example.test" in prompts[0]
+        save.assert_called_once()
+        assert result["providers"]["google-gemini-cli"] == save.call_args.args[0]
+
+    def test_independent_endpoints_are_not_silently_replaced(self, config_home, capsys):
+        from hermes_cli.model_setup_flows import _configure_gemini_endpoints_interactively
+
+        config = {
+            "providers": {
+                "google-gemini-cli": {
+                    "oauth_authorize_url": "https://one.test/auth",
+                    "oauth_token_url": "https://two.test/token",
+                    "oauth_userinfo_url": "https://three.test/userinfo",
+                    "code_assist_base_url": "https://four.test",
+                }
+            }
+        }
+        prompts = []
+
+        def answer(prompt):
+            prompts.append(prompt)
+            return "https://replacement.test"
+
+        with patch(
+            "hermes_cli.main._prompt_provider_choice", return_value=1,
+        ), patch(
+            "hermes_cli.model_setup_flows.line_input", side_effect=answer,
+        ), patch(
+            "hermes_cli.model_setup_flows.prompt_yes_no", return_value=False, create=True,
+        ), patch(
+            "hermes_cli.model_setup_flows._save_gemini_endpoint_overrides",
+        ) as save:
+            result = _configure_gemini_endpoints_interactively(config)
+
+        assert "[" not in prompts[0]
+        assert "independently configured" in capsys.readouterr().out
+        assert result is None
+        save.assert_not_called()
 
 
 class TestBaseUrlValidation:

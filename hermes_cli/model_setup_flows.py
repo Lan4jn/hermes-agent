@@ -19,9 +19,10 @@ call time, when main.py is fully loaded) so this module never imports
 """
 
 from __future__ import annotations
-from hermes_cli.cli_output import line_input
+from hermes_cli.cli_output import line_input, prompt_yes_no
 
 import argparse
+import copy
 import os
 import subprocess
 import urllib.parse
@@ -94,19 +95,120 @@ def _save_gemini_endpoint_overrides(
     config_path = get_config_path()
     config = read_user_config_raw(config_path)
     providers = config.get("providers")
+    if endpoints is None and not isinstance(providers, dict):
+        return
     if not isinstance(providers, dict):
         providers = {}
         config["providers"] = providers
     provider_config = providers.get("google-gemini-cli")
+    if endpoints is None and not isinstance(provider_config, dict):
+        return
     if not isinstance(provider_config, dict):
         provider_config = {}
         providers["google-gemini-cli"] = provider_config
 
+    changed = False
     for key in GEMINI_ENDPOINT_KEYS:
-        provider_config.pop(key, None)
+        if key in provider_config:
+            del provider_config[key]
+            changed = True
     if endpoints is not None:
         provider_config.update({key: endpoints[key] for key in GEMINI_ENDPOINT_KEYS})
+        changed = True
+    if not changed:
+        return
     atomic_roundtrip_yaml_save(config_path, config)
+
+
+def _configure_gemini_endpoints_interactively(config: dict) -> dict | None:
+    """Choose official or unified proxy endpoints before Gemini OAuth starts."""
+    from agent.gemini_endpoints import (
+        GeminiEndpointConfigError,
+        resolve_gemini_oauth_endpoints,
+    )
+    from hermes_cli.main import _prompt_provider_choice
+
+    providers = config.get("providers") if isinstance(config, dict) else None
+    current = (
+        providers.get("google-gemini-cli")
+        if isinstance(providers, dict)
+        else None
+    )
+    current = current if isinstance(current, dict) else {}
+    unified_origin = _gemini_unified_proxy_origin(current)
+    has_overrides = any(key in current for key in GEMINI_ENDPOINT_KEYS)
+
+    selected = _prompt_provider_choice(
+        ["Google official endpoints", "Custom reverse proxy"],
+        default=1 if has_overrides else 0,
+        title="Select Google Gemini CLI endpoint mode:",
+    )
+    if selected is None:
+        return None
+
+    updated = copy.deepcopy(config) if isinstance(config, dict) else {}
+    updated_providers = updated.get("providers")
+    if not isinstance(updated_providers, dict):
+        updated_providers = {}
+        updated["providers"] = updated_providers
+    updated_provider = updated_providers.get("google-gemini-cli")
+    if not isinstance(updated_provider, dict):
+        updated_provider = {}
+        updated_providers["google-gemini-cli"] = updated_provider
+    for key in GEMINI_ENDPOINT_KEYS:
+        updated_provider.pop(key, None)
+
+    endpoint_overrides: dict[str, str] | None = None
+    if selected == 1:
+        if has_overrides and unified_origin is None:
+            print(
+                "  Existing Gemini endpoints are independently configured. "
+                "Confirming a new origin replaces only those four endpoint fields."
+            )
+        prompt = (
+            f"Reverse proxy origin [{unified_origin}]: "
+            if unified_origin
+            else "Reverse proxy origin: "
+        )
+        try:
+            entered = line_input(prompt).strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return None
+        origin = entered or unified_origin
+        if not origin:
+            print("No proxy origin provided. No change.")
+            return None
+        try:
+            endpoint_overrides = _derive_gemini_proxy_endpoints(origin)
+        except GeminiEndpointConfigError as exc:
+            print(f"Invalid proxy origin: {exc}")
+            return None
+        updated_provider.update(endpoint_overrides)
+        display_endpoints = endpoint_overrides
+        print(
+            "  Warning: this proxy will receive OAuth authorization codes, "
+            "tokens, and Code Assist requests."
+        )
+    else:
+        resolved = resolve_gemini_oauth_endpoints(updated)
+        display_endpoints = {
+            key: getattr(resolved, key) for key in GEMINI_ENDPOINT_KEYS
+        }
+
+    print("  Gemini endpoints:")
+    for key in GEMINI_ENDPOINT_KEYS:
+        print(f"    {key}: {display_endpoints[key]}")
+    if not prompt_yes_no("Apply these endpoints?", default=False):
+        print("No change.")
+        return None
+
+    try:
+        _save_gemini_endpoint_overrides(endpoint_overrides)
+    except Exception as exc:
+        print(f"Failed to save Gemini endpoint configuration: {exc}")
+        return None
+    return updated
 
 
 def bedrock_region_geo_prefix(region_name: str) -> str:
@@ -971,6 +1073,11 @@ def _model_flow_google_gemini_cli(_config, current_model=""):
     )
     from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
     from hermes_cli.models import _PROVIDER_MODELS
+
+    _config = _configure_gemini_endpoints_interactively(_config)
+    if _config is None:
+        print("No change.")
+        return
 
     status = get_gemini_oauth_auth_status()
     if not status.get("logged_in"):
