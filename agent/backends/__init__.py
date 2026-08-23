@@ -7,6 +7,7 @@ from .base import (
     BackendTurnResult,
     InteractiveAgentBackend,
 )
+from .antigravity import AntigravitySession
 from .config import (
     AntigravityConfig,
     BackendSelection,
@@ -17,6 +18,7 @@ from .hermes import HermesBackend
 
 __all__ = [
     "AntigravityConfig",
+    "AntigravitySession",
     "BackendEvent",
     "BackendEventSink",
     "BackendSelection",
