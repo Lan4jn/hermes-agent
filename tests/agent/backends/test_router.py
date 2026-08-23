@@ -1,3 +1,4 @@
+import re
 from dataclasses import FrozenInstanceError, fields
 
 import pytest
@@ -38,8 +39,24 @@ def test_backend_resolution_order():
 
 @pytest.mark.parametrize("value", ["", "native", "ANTIGRAVITY", 7, None])
 def test_backend_resolution_rejects_invalid_values(value):
-    with pytest.raises(ValueError, match=r"hermes.*antigravity.*agent_backend"):
+    with pytest.raises(ValueError) as exc_info:
         resolve_backend({"agent_backends": {"default": value}}, platform="cli")
+
+    message = str(exc_info.value)
+    assert "agent_backends.default" in message
+    assert "hermes" in message and "antigravity" in message
+    assert "/backend" not in message
+
+
+def test_platform_backend_error_names_effective_config_key():
+    cfg = {
+        "platforms": {"telegram": {"extra": {"agent_backend": "invalid"}}}
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        resolve_backend(cfg, platform="telegram")
+
+    assert "platforms.telegram.extra.agent_backend" in str(exc_info.value)
 
 
 def test_default_config_selects_hermes():
@@ -59,7 +76,8 @@ def test_antigravity_permission_modes(permission_mode):
 @pytest.mark.parametrize("permission_mode", ["", "unrestricted", "TRUSTED", None])
 def test_antigravity_rejects_invalid_permission_mode(permission_mode):
     with pytest.raises(
-        ValueError, match=r"permission_mode.*strict.*sandbox.*trusted"
+        ValueError,
+        match=r"agent_backends\.antigravity\.permission_mode.*strict.*sandbox.*trusted",
     ):
         parse_antigravity_config(
             {
@@ -87,13 +105,18 @@ def test_antigravity_rejects_invalid_permission_mode(permission_mode):
         "http://proxy.example:8080\nheader: injected",
         "http://proxy.example:\x80",
         "http://proxy\u2003.example:8080",
+        "http://proxy.example%ZZ:8080",
+        "http://proxy.example%0aevil:8080",
+        "http://example.com|evil:8080",
         "http://[malformed:8080",
         " http://proxy.example:8080",
         "http://proxy.example:8080 ",
     ],
 )
 def test_antigravity_rejects_unsafe_proxy_urls(proxy_url):
-    with pytest.raises(ValueError, match="proxy_url"):
+    with pytest.raises(
+        ValueError, match=r"agent_backends\.antigravity\.proxy_url"
+    ):
         parse_antigravity_config(
             {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
         )
@@ -102,7 +125,9 @@ def test_antigravity_rejects_unsafe_proxy_urls(proxy_url):
 def test_antigravity_rejects_overlong_proxy_url():
     proxy_url = "https://proxy.example/" + "a" * 4096
 
-    with pytest.raises(ValueError, match="proxy_url.*too long"):
+    with pytest.raises(
+        ValueError, match=r"agent_backends\.antigravity\.proxy_url.*too long"
+    ):
         parse_antigravity_config(
             {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
         )
@@ -120,7 +145,14 @@ def test_antigravity_accepts_proxy_url_at_length_limit():
 
 
 @pytest.mark.parametrize(
-    "proxy_url", ["http://proxy.example:8080", "https://proxy.example"]
+    "proxy_url",
+    [
+        "http://proxy.example:8080",
+        "https://proxy.example",
+        "http://127.0.0.1:3128",
+        "http://[::1]:3128",
+        "http://localhost:8080",
+    ],
 )
 def test_antigravity_accepts_http_proxy_with_host(proxy_url):
     parsed = parse_antigravity_config(
@@ -220,6 +252,100 @@ def test_backend_contracts_are_immutable_and_contain_only_transport_facts():
         BackendEvent(kind="render_spinner")
     with pytest.raises(FrozenInstanceError):
         request.text = "changed"
+
+
+def test_backend_request_copies_media_paths_to_tuple():
+    media_paths = ["/tmp/first.png"]
+    request = BackendTurnRequest(
+        session_id="session-1",
+        profile="default",
+        platform="cli",
+        principal_id="local",
+        text="hello",
+        cwd=None,
+        media_paths=media_paths,
+    )
+
+    media_paths.append("/tmp/second.png")
+
+    assert request.media_paths == ("/tmp/first.png",)
+
+
+def test_backend_result_recursively_copies_and_freezes_usage():
+    usage = {
+        "tokens": {"input": 3},
+        "steps": ["first", {"tool": "terminal"}],
+    }
+    result = BackendTurnResult(
+        response="ok",
+        conversation_id="conversation-1",
+        usage=usage,
+        status="SUCCESS",
+    )
+
+    usage["tokens"]["input"] = 99
+    usage["steps"].append("second")
+    usage["steps"][1]["tool"] = "browser"
+
+    assert result.usage["tokens"]["input"] == 3
+    assert result.usage["steps"] == ("first", {"tool": "terminal"})
+    with pytest.raises(TypeError):
+        result.usage["tokens"]["input"] = 4
+    with pytest.raises(TypeError):
+        result.usage["steps"][1]["tool"] = "changed"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("enabled", "true"),
+        ("enabled", 1),
+        ("command", ""),
+        ("command", "   "),
+        ("command", None),
+        ("model", 7),
+        ("model", "   "),
+        ("effort", ""),
+        ("effort", "   "),
+        ("effort", None),
+        ("max_sessions", 0),
+        ("max_sessions", -1),
+        ("max_sessions", True),
+        ("max_sessions", "8"),
+        ("idle_timeout_seconds", 0),
+        ("idle_timeout_seconds", -1),
+        ("idle_timeout_seconds", False),
+        ("idle_timeout_seconds", "1800"),
+    ],
+)
+def test_antigravity_rejects_invalid_typed_config(key, value):
+    full_key = f"agent_backends.antigravity.{key}"
+
+    with pytest.raises(ValueError, match=re.escape(full_key)):
+        parse_antigravity_config(
+            {"agent_backends": {"antigravity": {key: value}}}
+        )
+
+
+def test_antigravity_accepts_explicit_typed_config_boundaries():
+    parsed = parse_antigravity_config(
+        {
+            "agent_backends": {
+                "antigravity": {
+                    "enabled": True,
+                    "command": "agy",
+                    "model": "",
+                    "effort": "low",
+                    "max_sessions": 1,
+                    "idle_timeout_seconds": 1,
+                }
+            }
+        }
+    )
+
+    assert parsed.enabled is True
+    assert parsed.model == ""
+    assert parsed.max_sessions == parsed.idle_timeout_seconds == 1
 
 
 def test_hermes_backend_calls_injected_native_turn_once():

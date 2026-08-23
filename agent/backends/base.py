@@ -16,6 +16,17 @@ class BackendTurnRequest:
     media_paths: tuple[str, ...] = ()
     trusted: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "media_paths", tuple(self.media_paths))
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
 
 @dataclass(frozen=True)
 class BackendTurnResult:
@@ -25,7 +36,7 @@ class BackendTurnResult:
     status: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "usage", MappingProxyType(dict(self.usage)))
+        object.__setattr__(self, "usage", _freeze(self.usage))
 
 
 @dataclass(frozen=True)
