@@ -20,12 +20,24 @@ class BackendTurnRequest:
         object.__setattr__(self, "media_paths", tuple(self.media_paths))
 
 
-def _freeze(value: Any) -> Any:
+_USAGE_TYPE_ERROR = (
+    "BackendTurnResult.usage must contain only JSON-compatible values "
+    "with string mapping keys"
+)
+
+
+def _freeze_usage(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError(_USAGE_TYPE_ERROR)
+        return MappingProxyType(
+            {key: _freeze_usage(item) for key, item in value.items()}
+        )
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze(item) for item in value)
-    return value
+        return tuple(_freeze_usage(item) for item in value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError(_USAGE_TYPE_ERROR)
 
 
 @dataclass(frozen=True)
@@ -36,7 +48,9 @@ class BackendTurnResult:
     status: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "usage", _freeze(self.usage))
+        if not isinstance(self.usage, Mapping):
+            raise TypeError(_USAGE_TYPE_ERROR)
+        object.__setattr__(self, "usage", _freeze_usage(self.usage))
 
 
 @dataclass(frozen=True)

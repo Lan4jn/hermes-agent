@@ -108,6 +108,10 @@ def test_antigravity_rejects_invalid_permission_mode(permission_mode):
         "http://proxy.example%ZZ:8080",
         "http://proxy.example%0aevil:8080",
         "http://example.com|evil:8080",
+        "http://[fe80::1%eth0]:8080",
+        "http://[fe80::1%25]:8080",
+        "http://[fe80::1%25eth0%0a]:8080",
+        "http://[fe80::1%25eth|0]:8080",
         "http://[malformed:8080",
         " http://proxy.example:8080",
         "http://proxy.example:8080 ",
@@ -151,7 +155,9 @@ def test_antigravity_accepts_proxy_url_at_length_limit():
         "https://proxy.example",
         "http://127.0.0.1:3128",
         "http://[::1]:3128",
+        "http://[fe80::1%25eth0]:3128",
         "http://localhost:8080",
+        "http://proxy.example.:8080",
     ],
 )
 def test_antigravity_accepts_http_proxy_with_host(proxy_url):
@@ -199,6 +205,19 @@ def test_proxy_env_secret_is_rejected_without_log_or_error_leak(
 
     assert loaded["agent_backends"]["antigravity"]["proxy_url"] == proxy_url
     assert "${ANTIGRAVITY_PROXY_URL}" in config_path.read_text(encoding="utf-8")
+    assert secret_marker not in str(exc_info.value)
+    assert secret_marker not in caplog.text
+
+
+def test_scoped_ipv6_proxy_rejects_userinfo_without_secret_leak(caplog):
+    secret_marker = "SCOPED_PROXY_SECRET_42be"
+    proxy_url = f"http://user:{secret_marker}@[fe80::1%25eth0]:8080"
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_antigravity_config(
+            {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
+        )
+
     assert secret_marker not in str(exc_info.value)
     assert secret_marker not in caplog.text
 
@@ -275,6 +294,8 @@ def test_backend_result_recursively_copies_and_freezes_usage():
     usage = {
         "tokens": {"input": 3},
         "steps": ["first", {"tool": "terminal"}],
+        "scalars": [None, True, 1, 1.5, "text"],
+        "tuple": ("nested", [2]),
     }
     result = BackendTurnResult(
         response="ok",
@@ -289,10 +310,42 @@ def test_backend_result_recursively_copies_and_freezes_usage():
 
     assert result.usage["tokens"]["input"] == 3
     assert result.usage["steps"] == ("first", {"tool": "terminal"})
+    assert result.usage["scalars"] == (None, True, 1, 1.5, "text")
+    assert result.usage["tuple"] == ("nested", (2,))
     with pytest.raises(TypeError):
         result.usage["tokens"]["input"] = 4
     with pytest.raises(TypeError):
         result.usage["steps"][1]["tool"] = "changed"
+
+
+class _MutableUsageValue:
+    def __init__(self):
+        self.items = []
+
+    def __repr__(self):
+        return "USAGE_SECRET_MARKER_91ac"
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"unsupported": {"first"}},
+        {"unsupported": bytearray(b"secret")},
+        {"unsupported": _MutableUsageValue()},
+        {1: "non-string key"},
+        {"nested": {2: "non-string key"}},
+    ],
+)
+def test_backend_result_rejects_non_json_usage(usage):
+    with pytest.raises(TypeError, match="usage") as exc_info:
+        BackendTurnResult(
+            response="ok",
+            conversation_id="conversation-1",
+            usage=usage,
+            status="SUCCESS",
+        )
+
+    assert "USAGE_SECRET_MARKER_91ac" not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(

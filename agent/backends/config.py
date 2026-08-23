@@ -116,11 +116,27 @@ def _validate_proxy_url(value: Any) -> tuple[str, str]:
         raise ValueError(f"{_PROXY_KEY}: URL must include a host")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError(f"{_PROXY_KEY}: credentials are not allowed")
-    if "%" in parsed.netloc:
+    if "%" in hostname:
+        if not _valid_scoped_ipv6_host(hostname, parsed.netloc):
+            raise ValueError(f"{_PROXY_KEY}: invalid scoped IPv6 host")
+    elif "%" in parsed.netloc:
         raise ValueError(f"{_PROXY_KEY}: percent escapes are not allowed in host")
-    if not _valid_proxy_host(hostname):
+    elif not _valid_proxy_host(hostname):
         raise ValueError(f"{_PROXY_KEY}: host contains invalid characters")
     return value, f"{scheme}://{parsed.netloc}"
+
+
+def _valid_scoped_ipv6_host(hostname: str, netloc: str) -> bool:
+    address, separator, zone = hostname.partition("%25")
+    if not netloc.startswith("[") or not separator or not zone or "%" in zone:
+        return False
+    if not all(char.isascii() and (char.isalnum() or char in "._~-") for char in zone):
+        return False
+    try:
+        ipaddress.IPv6Address(address)
+        return True
+    except ValueError:
+        return False
 
 
 def _valid_proxy_host(hostname: str) -> bool:
@@ -130,11 +146,18 @@ def _valid_proxy_host(hostname: str) -> bool:
     except ValueError:
         pass
 
-    if ":" in hostname or not hostname.isascii() or len(hostname) > 253:
+    absolute = hostname.endswith(".")
+    dns_name = hostname[:-1] if absolute else hostname
+    if (
+        not dns_name
+        or ":" in dns_name
+        or not dns_name.isascii()
+        or len(dns_name) > 253
+    ):
         return False
-    if all(char in "0123456789." for char in hostname):
+    if all(char in "0123456789." for char in dns_name):
         return False
-    labels = hostname.split(".")
+    labels = dns_name.split(".")
     return all(
         label
         and len(label) <= 63
