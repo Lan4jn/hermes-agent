@@ -12,6 +12,7 @@ import threading
 import time
 from typing import Any
 
+from agent.deadline import kill_process_tree
 from agent.redact import redact_sensitive_text
 from hermes_cli._subprocess_compat import split_command_line, windows_hide_flags
 
@@ -97,6 +98,7 @@ class AntigravitySession:
         self._turn_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._effective_metadata: dict[str, Any] = {}
+        self._reader_threads: list[threading.Thread] = []
         self._started = False
         self._fatal = False
         self._closed = False
@@ -203,15 +205,19 @@ class AntigravitySession:
             self._stdout_events = queue.Queue()
             with self._stderr_lock:
                 self._stderr_tail.clear()
-            self._process = subprocess.Popen(
-                argv,
-                cwd=self._cwd,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=windows_hide_flags(),
-            )
+            popen_kwargs: dict[str, Any] = {
+                "cwd": self._cwd,
+                "env": env,
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = windows_hide_flags() | 0x00000200
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            self._process = subprocess.Popen(argv, **popen_kwargs)
             process = self._process
             self._started = True
 
@@ -234,18 +240,21 @@ class AntigravitySession:
 
     def _start_readers(self, process: subprocess.Popen[bytes]) -> None:
         assert process.stdout is not None and process.stderr is not None
-        threading.Thread(
+        t1 = threading.Thread(
             target=self._read_stdout,
             args=(process.stdout,),
             name=f"antigravity-stdout-{process.pid}",
             daemon=True,
-        ).start()
-        threading.Thread(
+        )
+        t2 = threading.Thread(
             target=self._read_stderr,
             args=(process.stderr,),
             name=f"antigravity-stderr-{process.pid}",
             daemon=True,
-        ).start()
+        )
+        self._reader_threads = [t1, t2]
+        t1.start()
+        t2.start()
 
     def _read_stdout(self, pipe: Any) -> None:
         try:
@@ -434,28 +443,71 @@ class AntigravitySession:
     def _finish_process(
         self, process: subprocess.Popen[bytes], *, wait_first: bool
     ) -> None:
+        pid = process.pid
         if wait_first and self._wait_for_exit(process):
+            if pid:
+                try:
+                    kill_process_tree(pid)
+                except Exception:
+                    pass
             self._clear_exited_process(process)
+            self._join_readers()
             return
+
+        if pid:
+            import signal as _signal
+
+            try:
+                kill_process_tree(
+                    pid, sig=getattr(_signal, "SIGTERM", None)
+                )
+            except Exception:
+                pass
         if process.poll() is None:
             try:
                 process.terminate()
             except OSError:
                 pass
+
         if self._wait_for_exit(process):
+            if pid:
+                try:
+                    kill_process_tree(pid)
+                except Exception:
+                    pass
             self._clear_exited_process(process)
+            self._join_readers()
             return
+
+        if pid:
+            try:
+                kill_process_tree(pid)
+            except Exception:
+                pass
         if process.poll() is None:
             try:
                 process.kill()
             except OSError:
                 pass
+
         if self._wait_for_exit(process):
+            if pid:
+                try:
+                    kill_process_tree(pid)
+                except Exception:
+                    pass
             self._clear_exited_process(process)
+            self._join_readers()
             return
         if process.poll() is None:
             raise self._error("Antigravity process could not be terminated")
         self._clear_exited_process(process)
+        self._join_readers()
+
+    def _join_readers(self) -> None:
+        for thread in getattr(self, "_reader_threads", []):
+            if thread is not threading.current_thread() and thread.is_alive():
+                thread.join(timeout=1.0)
 
     @staticmethod
     def _wait_for_exit(process: subprocess.Popen[bytes]) -> bool:

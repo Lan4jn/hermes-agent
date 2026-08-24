@@ -471,33 +471,6 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
     Returns True when the target (or any of its tree) was signalled, False
     when the process was already gone or every termination call failed.
     """
-    if sys.platform == "win32":
-        try:
-            from hermes_cli._subprocess_compat import windows_hide_flags
-
-            creationflags = windows_hide_flags()
-        except Exception:
-            creationflags = 0
-        try:
-            proc = subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True,
-                timeout=15,
-                check=False,
-                creationflags=creationflags,
-            )
-            # taskkill exits non-zero for not-found / access-denied; keep the
-            # cross-platform contract (False = nothing was terminated).
-            return proc.returncode == 0
-        except Exception:
-            logger.debug("kill_process_tree: taskkill failed for pid %s", pid, exc_info=True)
-            return False
-
-    import signal as _signal
-
-    if sig is None:
-        sig = _signal.SIGKILL
-
     # Snapshot descendants while the parent is still alive — after it dies
     # they reparent to init/subreaper and a parent walk finds nothing.
     descendants: list = []
@@ -509,6 +482,43 @@ def kill_process_tree(pid: int, *, sig: Optional[int] = None) -> bool:
         # Already gone, or psutil unavailable in a stripped env — the
         # group-signal below still covers same-session descendants.
         descendants = []
+
+    if sys.platform == "win32":
+        try:
+            from hermes_cli._subprocess_compat import windows_hide_flags
+
+            creationflags = windows_hide_flags()
+        except Exception:
+            creationflags = 0
+        signalled = False
+        try:
+            proc = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=15,
+                check=False,
+                creationflags=creationflags,
+            )
+            # taskkill exits non-zero for not-found / access-denied; keep the
+            # cross-platform contract (False = nothing was terminated).
+            signalled = proc.returncode == 0
+        except Exception:
+            logger.debug("kill_process_tree: taskkill failed for pid %s", pid, exc_info=True)
+            signalled = False
+
+        for child in descendants:
+            try:
+                if child.is_running():
+                    child.kill()
+                    signalled = True
+            except Exception:
+                pass
+        return signalled
+
+    import signal as _signal
+
+    if sig is None:
+        sig = _signal.SIGKILL
 
     signalled = False
     try:
