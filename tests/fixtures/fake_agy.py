@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -33,25 +34,44 @@ def main() -> int:
         {
             "event": "init",
             "conversation_id": conversation_id,
-            "model": args.model,
-            "effort": args.effort,
-            "pid": os.getpid(),
-            "env": {
-                key: os.environ.get(key, "")
-                for key in (
-                    "HTTP_PROXY",
-                    "HTTPS_PROXY",
-                    "http_proxy",
-                    "https_proxy",
-                    "AGY_TEST_HOST_ONLY",
-                    "AGY_TEST_PRINCIPAL",
-                    "AGY_TEST_TEXT",
-                )
+            "init": {
+                "cwd": os.getcwd(),
+                "model": args.model,
+                "effort": args.effort,
+                "pid": os.getpid(),
+                "env": {
+                    key: os.environ.get(key, "")
+                    for key in (
+                        "HTTP_PROXY",
+                        "HTTPS_PROXY",
+                        "http_proxy",
+                        "https_proxy",
+                        "AGY_TEST_HOST_ONLY",
+                        "AGY_TEST_PRINCIPAL",
+                        "AGY_TEST_TEXT",
+                        "OPENAI_API_KEY",
+                        "QQBOT_TOKEN",
+                        "CUSTOM_SECRET",
+                        "PATH",
+                        "HOME",
+                    )
+                },
+                "env_present": {
+                    key: key in os.environ
+                    for key in (
+                        "OPENAI_API_KEY",
+                        "QQBOT_TOKEN",
+                        "CUSTOM_SECRET",
+                        "PATH",
+                        "HOME",
+                    )
+                },
+                "argv": sys.argv[1:],
             },
-            "argv": sys.argv[1:],
         }
     )
 
+    child = None
     for raw in sys.stdin:
         request = json.loads(raw)
         if (
@@ -94,17 +114,48 @@ def main() -> int:
         if text in {"TIMEOUT", "INTERRUPT"}:
             time.sleep(10)
             continue
+        if text == "SPAWN_CHILD":
+            child = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            emit(
+                {
+                    "event": "result",
+                    "result": {
+                        "conversation_id": conversation_id,
+                        "status": "SUCCESS",
+                        "response": str(child.pid),
+                        "usage": {},
+                    },
+                }
+            )
+            continue
 
         if text.startswith("STATUS:"):
             status = text.partition(":")[2]
-            emit({"event": "result", "status": status, "response": "nope"})
+            emit(
+                {
+                    "event": "result",
+                    "result": {
+                        "conversation_id": conversation_id,
+                        "status": status,
+                        "response": "nope",
+                    },
+                }
+            )
             continue
         if text == "STATUS_SECRET":
             emit(
                 {
                     "event": "result",
-                    "status": "api_key=STATUS_SECRET_MARKER_1234567890",
-                    "response": "nope",
+                    "result": {
+                        "conversation_id": conversation_id,
+                        "status": "api_key=STATUS_SECRET_MARKER_1234567890",
+                        "response": "nope",
+                    },
                 }
             )
             continue
@@ -113,17 +164,18 @@ def main() -> int:
             for step_index, status, delta in (
                 (0, "ACTIVE", "a"),
                 (0, "ACTIVE", "ab"),
-                (0, "DONE", "aab"),
+                (0, "DONE", "\n"),
                 (1, "ACTIVE", "next"),
-                (1, "DONE", "\n"),
+                (1, "DONE", "!"),
             ):
                 emit(
                     {
                         "event": "step_update",
-                        "step": {
+                        "step_update": {
+                            "conversation_id": conversation_id,
                             "step_index": step_index,
-                            "type": "agent_response",
-                            "status": status,
+                            "step_type": "agent_response",
+                            "state": status,
                             "text_delta": delta,
                         },
                     }
@@ -131,9 +183,12 @@ def main() -> int:
             emit(
                 {
                     "event": "result",
-                    "status": "SUCCESS",
-                    "response": "aabnext\n",
-                    "usage": {},
+                    "result": {
+                        "conversation_id": conversation_id,
+                        "status": "SUCCESS",
+                        "response": "aab\nnext!",
+                        "usage": {},
+                    },
                 }
             )
             continue
@@ -145,17 +200,22 @@ def main() -> int:
             emit(
                 {
                     "event": "step_update",
-                    "step": {
-                        "type": "tool",
-                        "status": "DONE",
-                        "name": "terminal",
-                        "input": {
-                            "command": "echo ok",
-                            "api_key": "sk-" + "b" * 32,
-                            "padding": "i" * 3000,
+                    "step_update": {
+                        "conversation_id": conversation_id,
+                        "step_index": 1,
+                        "step_type": "tool",
+                        "state": "DONE",
+                        "tool_name": "terminal",
+                        "tool_info": {
+                            "name": "terminal",
+                            "parameters": {
+                                "command": "echo ok",
+                                "api_key": "sk-" + "b" * 32,
+                                "padding": "i" * 3000,
+                            },
+                            "output": "oauth_token=OAUTH_TOOL_SECRET_1234567890 "
+                            + "o" * 3000,
                         },
-                        "output": "oauth_token=OAUTH_TOOL_SECRET_1234567890 "
-                        + "o" * 3000,
                     },
                 }
             )
@@ -164,10 +224,11 @@ def main() -> int:
         emit(
             {
                 "event": "step_update",
-                "step": {
+                "step_update": {
+                    "conversation_id": conversation_id,
                     "step_index": 0,
-                    "type": "agent_response",
-                    "status": "ACTIVE",
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
                     "text_delta": response[:6],
                 },
             }
@@ -175,10 +236,11 @@ def main() -> int:
         emit(
             {
                 "event": "step_update",
-                "step": {
+                "step_update": {
+                    "conversation_id": conversation_id,
                     "step_index": 0,
-                    "type": "agent_response",
-                    "status": "ACTIVE",
+                    "step_type": "agent_response",
+                    "state": "ACTIVE",
                     "text_delta": response[6:],
                 },
             }
@@ -186,24 +248,34 @@ def main() -> int:
         emit(
             {
                 "event": "step_update",
-                "step": {
+                "step_update": {
+                    "conversation_id": conversation_id,
                     "step_index": 0,
-                    "type": "agent_response",
-                    "status": "DONE",
-                    "text_delta": response,
+                    "step_type": "agent_response",
+                    "state": "DONE",
                 },
             }
         )
         emit(
             {
                 "event": "result",
-                "status": "SUCCESS",
-                "response": response,
-                "usage": {"input_tokens": len(text), "output_tokens": len(response)},
+                "result": {
+                    "conversation_id": conversation_id,
+                    "status": "SUCCESS",
+                    "response": response,
+                    "duration_seconds": 0.01,
+                    "num_turns": 1,
+                    "usage": {
+                        "input_tokens": len(text),
+                        "output_tokens": len(response),
+                    },
+                },
             }
         )
         if text == "EXIT_AFTER_RESULT":
             return 0
+    if child is not None:
+        child.wait()
     return 0
 
 

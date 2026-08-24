@@ -24,6 +24,47 @@ _STDERR_LINE_LIMIT = 4_096
 _TOOL_PART_LIMIT = 1_000
 _FAILED_STATUSES = {"ERROR", "CANCELED", "INTERRUPTED", "INVALID", "WAITING", "RUNNING"}
 _TERMINAL_STATUSES = _FAILED_STATUSES | {"SUCCESS"}
+_CHILD_ENV_ALLOWLIST = {
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "SHELL",
+    "USER",
+    "USERNAME",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "COLORTERM",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "SSH_CONNECTION",
+    "SSH_CLIENT",
+    "SSH_TTY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "NO_PROXY",
+    "no_proxy",
+}
 _OAUTH_SECRET_RE = re.compile(
     r"(?i)(\boauth[_-]?(?:(?:access|refresh)[_-]?)?token\b\s*(?:=|:\s*)[\"']?)[^\s,\"'}]+"
 )
@@ -54,7 +95,7 @@ class AntigravitySession:
         self._stderr_tail: deque[str] = deque(maxlen=40)
         self._stderr_lock = threading.Lock()
         self._turn_lock = threading.Lock()
-        self._process_lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._effective_metadata: dict[str, Any] = {}
         self._started = False
         self._fatal = False
@@ -62,9 +103,19 @@ class AntigravitySession:
 
     @property
     def pid(self) -> int | None:
-        with self._process_lock:
+        with self._state_lock:
             process = self._process
             return process.pid if process is not None and process.poll() is None else None
+
+    @property
+    def alive(self) -> bool:
+        with self._state_lock:
+            return self._process is not None and self._process.poll() is None
+
+    @property
+    def fatal(self) -> bool:
+        with self._state_lock:
+            return self._fatal
 
     @property
     def conversation_id(self) -> str:
@@ -81,8 +132,9 @@ class AntigravitySession:
             raise PermissionError("trusted Antigravity mode requires an authorized request")
 
         with self._turn_lock:
-            if self._fatal or self._closed:
-                raise self._error("terminated Antigravity session cannot be reused")
+            with self._state_lock:
+                if self._fatal or self._closed:
+                    raise self._error("terminated Antigravity session cannot be reused")
             deadline = time.monotonic() + self._timeout_seconds
             try:
                 process = self._ensure_process(deadline)
@@ -97,17 +149,19 @@ class AntigravitySession:
                 process.stdin.flush()
                 return self._read_turn(events, deadline)
             except (BrokenPipeError, OSError):
-                self._fatal = True
+                self._mark_fatal()
                 message = self._failure_message("Antigravity transport failed")
                 self._abort_process()
                 raise RuntimeError(message) from None
             except Exception:
-                self._fatal = True
+                self._mark_fatal()
                 self._abort_process()
                 raise
 
     def _ensure_process(self, deadline: float) -> subprocess.Popen[bytes]:
-        with self._process_lock:
+        with self._state_lock:
+            if self._fatal or self._closed:
+                raise self._error("terminated Antigravity session cannot be reused")
             if self._process is not None:
                 if self._process.poll() is None:
                     return self._process
@@ -125,12 +179,12 @@ class AntigravitySession:
                     "stream-json",
                     "--output-format",
                     "stream-json",
-                    "--model",
-                    self._config.model,
-                    "--effort",
-                    self._config.effort,
                 ]
             )
+            if self._config.model:
+                argv.extend(["--model", self._config.model])
+            if self._config.effort:
+                argv.extend(["--effort", self._config.effort])
             if self._config.permission_mode == "sandbox":
                 argv.append("--sandbox")
             elif self._config.permission_mode == "trusted":
@@ -138,7 +192,11 @@ class AntigravitySession:
             if self._conversation_id:
                 argv.extend(["--conversation", self._conversation_id])
 
-            env = os.environ.copy()
+            env = {
+                key: os.environ[key]
+                for key in _CHILD_ENV_ALLOWLIST
+                if key in os.environ
+            }
             if self._config.proxy_url:
                 for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
                     env[key] = self._config.proxy_url
@@ -159,16 +217,20 @@ class AntigravitySession:
 
         self._start_readers(process)
         init = self._next_json(deadline)
-        if init.get("event") != "init":
+        self._record_init(init)
+        return process
+
+    def _record_init(self, payload: dict[str, Any]) -> None:
+        if payload.get("event") != "init":
             raise self._error("Antigravity protocol did not begin with init")
-        conversation_id = init.get("conversation_id")
+        conversation_id = payload.get("conversation_id")
         if not isinstance(conversation_id, str) or not conversation_id:
             raise self._error("Antigravity init omitted conversation_id")
+        metadata = payload.get("init")
+        if not isinstance(metadata, dict):
+            raise self._error("Antigravity init omitted init payload")
         self._conversation_id = conversation_id
-        self._effective_metadata = {
-            key: value for key, value in init.items() if key not in {"event", "conversation_id"}
-        }
-        return process
+        self._effective_metadata = dict(metadata)
 
     def _start_readers(self, process: subprocess.Popen[bytes]) -> None:
         assert process.stdout is not None and process.stderr is not None
@@ -250,36 +312,27 @@ class AntigravitySession:
         return payload
 
     def _read_turn(self, events: BackendEventSink, deadline: float) -> BackendTurnResult:
-        step_text: dict[tuple[type, Any], str] = {}
         response_parts: list[str] = []
         while True:
             payload = self._next_json(deadline)
             event_type = payload.get("event")
             if event_type == "step_update":
-                step = payload.get("step")
+                step = payload.get("step_update")
                 if not isinstance(step, dict):
                     continue
-                step_type = step.get("type")
+                step_type = step.get("step_type")
                 if step_type == "agent_response":
                     delta = step.get("text_delta", "")
                     if not isinstance(delta, str):
                         continue
-                    raw_step_index = step.get("step_index")
-                    if not isinstance(raw_step_index, (int, str)):
-                        raw_step_index = "default"
-                    step_index = (type(raw_step_index), raw_step_index)
-                    status = step.get("status")
-                    accumulated = step_text.get(step_index, "")
-                    if status == "DONE" and delta == accumulated:
-                        delta = ""
+                    state = step.get("state")
                     if delta:
-                        step_text[step_index] = accumulated + delta
                         response_parts.append(delta)
                         events(
                             BackendEvent(
                                 kind="message_delta",
                                 text=delta,
-                                status=status if isinstance(status, str) else "",
+                                status=state if isinstance(state, str) else "",
                             )
                         )
                 elif step_type == "tool":
@@ -288,13 +341,16 @@ class AntigravitySession:
             if event_type != "result":
                 continue
 
-            status = payload.get("status")
+            result = payload.get("result")
+            if not isinstance(result, dict):
+                raise self._error("Antigravity result omitted result payload")
+            status = result.get("status")
             if not isinstance(status, str) or status not in _TERMINAL_STATUSES:
                 raise self._error("Antigravity invalid terminal status")
             if status != "SUCCESS":
                 raise self._error(f"Antigravity result status {status}")
-            response = payload.get("response", "".join(response_parts))
-            usage = payload.get("usage", {})
+            response = result.get("response", "".join(response_parts))
+            usage = result.get("usage", {})
             if not isinstance(response, str) or not isinstance(usage, dict):
                 raise self._error("Antigravity SUCCESS result had invalid fields")
             return BackendTurnResult(
@@ -314,12 +370,21 @@ class AntigravitySession:
                 return "[redaction failed]"
             return redacted[:_TOOL_PART_LIMIT]
 
-        detail = f"input={safe_part(step.get('input', {}))} output={safe_part(step.get('output', ''))}"
+        tool_info = step.get("tool_info")
+        if not isinstance(tool_info, dict):
+            tool_info = {}
+        detail = (
+            f"parameters={safe_part(tool_info.get('parameters', {}))} "
+            f"output={safe_part(tool_info.get('output', ''))} "
+            f"error={safe_part(tool_info.get('error', ''))}"
+        )
+        tool_name = step.get("tool_name", tool_info.get("name", ""))
+        state = step.get("state", "")
         return BackendEvent(
             kind="tool",
             text=detail,
-            tool_name=str(step.get("name", ""))[:200],
-            status=str(step.get("status", ""))[:100],
+            tool_name=str(tool_name)[:200],
+            status=str(state)[:100],
         )
 
     def _failure_message(self, reason: str) -> str:
@@ -333,38 +398,34 @@ class AntigravitySession:
         return RuntimeError(self._failure_message(reason))
 
     def interrupt(self) -> bool:
-        with self._process_lock:
+        with self._state_lock:
             process = self._process
         if process is None:
             return False
         if process.poll() is not None:
             self._clear_exited_process(process)
-            self._fatal = True
-            self._closed = True
+            self._mark_fatal()
             return False
-        self._fatal = True
+        self._mark_fatal()
         self._abort_process()
-        self._closed = True
         return True
 
     def close(self) -> None:
-        with self._process_lock:
+        with self._state_lock:
+            self._closed = True
             process = self._process
         if process is None:
-            self._closed = True
             return
-        self._fatal = True
         if process.stdin is not None:
             try:
                 process.stdin.close()
             except OSError:
                 pass
         self._finish_process(process, wait_first=True)
-        self._closed = True
 
     def _abort_process(self) -> None:
-        self._fatal = True
-        with self._process_lock:
+        self._mark_fatal()
+        with self._state_lock:
             process = self._process
         if process is None:
             return
@@ -407,6 +468,10 @@ class AntigravitySession:
     def _clear_exited_process(self, process: subprocess.Popen[bytes]) -> None:
         if process.poll() is None:
             raise self._error("Antigravity process is still running")
-        with self._process_lock:
+        with self._state_lock:
             if self._process is process:
                 self._process = None
+
+    def _mark_fatal(self) -> None:
+        with self._state_lock:
+            self._fatal = True
