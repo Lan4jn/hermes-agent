@@ -13294,6 +13294,31 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
     # The CLI writes "pending" then poll-waits for terminal state. The gateway
     # watcher transitions pending→running→{completed,failed}.
 
+    def set_session_agent_backend(
+        self,
+        session_id: str,
+        backend: str,
+        conversation_id: str = "",
+    ) -> None:
+        """Persist the agent backend choice and optional conversation ID.
+
+        ``backend`` is ``"hermes"`` or ``"antigravity"`` (or ``""`` to clear).
+        ``conversation_id`` is the opaque Antigravity conversation handle,
+        empty for Hermes sessions. Silently no-ops if the session does not
+        exist.
+        """
+        def _do(conn):
+            conn.execute(
+                "UPDATE sessions SET agent_backend = ?, "
+                "backend_conversation_id = ? WHERE id = ?",
+                (backend, conversation_id, session_id),
+            )
+        self._execute_write(_do)
+
+    # ------------------------------------------------------------------
+    # Session handoff — request → claim → complete/fail lifecycle.  The
+    # watcher transitions pending→running→{completed,failed}.
+
     def request_handoff(self, session_id: str, platform: str) -> bool:
         """Mark a session as pending handoff to the given platform.
 

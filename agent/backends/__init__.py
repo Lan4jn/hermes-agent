@@ -15,10 +15,12 @@ from .config import (
     resolve_backend,
 )
 from .hermes import HermesBackend
+from .pool import AntigravitySessionPool
 
 __all__ = [
     "AntigravityConfig",
     "AntigravitySession",
+    "AntigravitySessionPool",
     "BackendEvent",
     "BackendEventSink",
     "BackendSelection",
