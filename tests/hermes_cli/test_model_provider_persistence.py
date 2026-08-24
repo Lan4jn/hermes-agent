@@ -586,3 +586,34 @@ class TestZaiEndpointPicker:
         # Default should point at index 2 (coding-global)
         assert captured["default"] == 2
         assert result == coding_url
+
+
+class TestAntigravityModelPicker:
+    """Antigravity CLI should be present in Google group and dispatch setup."""
+
+    def test_google_group_includes_antigravity_cli(self):
+        from hermes_cli.models import PROVIDER_GROUPS, provider_group_for_slug
+
+        group_label, group_desc, members = PROVIDER_GROUPS["google"]
+        assert "antigravity-cli" in members
+        assert provider_group_for_slug("antigravity-cli") == "google"
+
+    def test_select_antigravity_flow_preserves_native_model_config(self, config_home):
+        from hermes_cli.config import load_config
+        from hermes_cli.main import select_provider_and_model, _model_flow_antigravity
+
+        # Starting state: native Gemini provider configured
+        config = load_config()
+        config["model"] = {"default": "gemini-2.5-flash", "provider": "gemini"}
+        from hermes_cli.config import save_config
+        save_config(config)
+
+        with patch("agent.backends.setup.run_antigravity_setup", return_value=True) as mock_setup:
+            _model_flow_antigravity(config, "gemini-2.5-flash")
+            mock_setup.assert_called_once_with(interactive=True)
+
+        # Native model configuration must remain untouched
+        after = load_config()
+        assert after["model"]["default"] == "gemini-2.5-flash"
+        assert after["model"]["provider"] == "gemini"
+

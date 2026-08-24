@@ -1127,6 +1127,13 @@ def _model_flow_google_gemini_cli(_config, current_model=""):
         print("No change.")
 
 
+def _model_flow_antigravity(_config, current_model=""):
+    """Google Antigravity CLI setup-only flow — does not mutate model.provider."""
+    from agent.backends.setup import run_antigravity_setup
+
+    run_antigravity_setup(interactive=True)
+
+
 def _model_flow_custom(config):
     """Custom endpoint: collect URL, API key, and model name.
 
