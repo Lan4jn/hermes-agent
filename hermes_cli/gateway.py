@@ -8285,3 +8285,16 @@ def _gateway_command_inner(args):
             print("Legacy unit migration only applies to systemd-based Linux hosts.")
             return
         remove_legacy_hermes_units(interactive=not yes, dry_run=dry_run)
+
+    elif subcmd == "backend":
+        backend_subcmd = getattr(args, "backend_command", None)
+        backend_name = getattr(args, "backend", "antigravity")
+        if backend_subcmd == "setup":
+            from agent.backends.setup import run_backend_setup
+            run_backend_setup(backend_name)
+        elif backend_subcmd == "status":
+            from agent.backends.setup import run_backend_status
+            run_backend_status(backend_name)
+        else:
+            print("Usage: hermes gateway backend [setup|status] <backend_name>")
+

@@ -223,6 +223,32 @@ def build_gateway_parser(
     # gateway setup
     gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
+    # gateway backend
+    gateway_backend = gateway_subparsers.add_parser(
+        "backend",
+        help="Manage interactive agent backends (Antigravity)",
+        description="Configure or inspect interactive agent backends like Google Antigravity.",
+    )
+    gateway_backend_subparsers = gateway_backend.add_subparsers(dest="backend_command")
+
+    gateway_backend_setup = gateway_backend_subparsers.add_parser(
+        "setup", help="Set up an interactive agent backend"
+    )
+    gateway_backend_setup.add_argument(
+        "backend",
+        choices=["antigravity"],
+        help="Backend name to configure",
+    )
+
+    gateway_backend_status = gateway_backend_subparsers.add_parser(
+        "status", help="Show interactive agent backend status"
+    )
+    gateway_backend_status.add_argument(
+        "backend",
+        choices=["antigravity"],
+        help="Backend name to check",
+    )
+
     # gateway migrate-legacy
     gateway_migrate_legacy = gateway_subparsers.add_parser(
         "migrate-legacy",

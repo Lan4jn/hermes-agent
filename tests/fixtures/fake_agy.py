@@ -19,6 +19,12 @@ def main() -> int:
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+    if "--version" in sys.argv:
+        sys.stdout.write("agy 1.2.0 (fake)\n")
+        return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "models":
+        sys.stdout.write("gemini-3.7-flash-high\ngemini-2.5-pro\ngemini-2.5-flash\n")
+        return 0
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-format", required=True)
     parser.add_argument("--output-format", required=True)
