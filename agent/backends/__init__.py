@@ -16,7 +16,6 @@ from .config import (
 )
 from .hermes import HermesBackend
 from .pool import AntigravitySessionPool
-from .router import BackendRouter
 
 __all__ = [
     "AntigravityConfig",
@@ -24,7 +23,6 @@ __all__ = [
     "AntigravitySessionPool",
     "BackendEvent",
     "BackendEventSink",
-    "BackendRouter",
     "BackendSelection",
     "BackendTurnRequest",
     "BackendTurnResult",
