@@ -9843,6 +9843,17 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         self.conversation_history = []
         self._pending_title = None
         self._resumed = False
+        # /new clears the backend override: inherits global/platform default
+        self._session_backend_override = None
+        if getattr(self, "_backend_router", None) is not None and old_session_id:
+            try:
+                self._backend_router.close_session(
+                    profile=getattr(self, "profile_name", "default") or "default",
+                    platform="cli",
+                    session_id=old_session_id,
+                )
+            except Exception:
+                pass
         # /new clears the -m / --model override flag: an explicit CLI model
         # was for the previous session only, not for every session spawned
         # afterwards.
@@ -11521,6 +11532,39 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         if not one_turn:
             HermesCLI._persist_model_switch_to_session(self, result)
 
+    @property
+    def backend_router(self):
+        if getattr(self, "_backend_router", None) is None:
+            from agent.backends.router import BackendRouter
+            self._backend_router = BackendRouter(
+                config=getattr(self, "config", None) or {},
+                session_db=getattr(self, "_session_db", None),
+            )
+        return self._backend_router
+
+    def _handle_backend_command(self, cmd_original: str) -> None:
+        """Handle /backend command — query or switch agent backend."""
+        parts = cmd_original.split(None, 1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if not arg:
+            selection = self.backend_router.resolve(
+                platform="cli",
+                session_override=getattr(self, "_session_backend_override", None),
+            )
+            _cprint(f"  Backend: {selection.name} (from {selection.source})")
+            return
+
+        if arg in {"hermes", "antigravity"}:
+            self._session_backend_override = arg
+            if getattr(self, "_session_db", None) and getattr(self, "session_id", None):
+                try:
+                    self._session_db.set_session_agent_backend(self.session_id, arg)
+                except Exception:
+                    logger.debug("Failed to set session backend in DB", exc_info=True)
+            _cprint(f"  ✓ Switched backend to {arg} for current session")
+        else:
+            _cprint(f"  ✗ Invalid backend: {arg}. Supported backends: hermes, antigravity")
+
     def _handle_codex_runtime(self, cmd_original: str) -> None:
         """Handle /codex-runtime — toggle the codex app-server runtime opt-in.
 
@@ -11998,6 +12042,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             self._handle_resume_command(cmd_original)
         elif canonical == "sessions":
             self._handle_sessions_command(cmd_original)
+        elif canonical == "backend":
+            self._handle_backend_command(cmd_original)
         elif canonical == "model":
             self._handle_model_switch(cmd_original)
         elif canonical == "codex-runtime":
@@ -16422,22 +16468,67 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 )
                 self._pending_one_turn_model_restore = None
                 try:
-                    result = self.agent.run_conversation(
-                        user_message=agent_message,
-                        conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
-                        stream_callback=stream_callback,
-                        task_id=self.session_id,
-                        persist_user_message=_persist_clean_user_message,
-                        moa_config=_moa_cfg,
+                    _backend_sel = self.backend_router.resolve(
+                        platform="cli",
+                        session_override=getattr(self, "_session_backend_override", None),
                     )
-                    if getattr(self, "_pending_moa_disable_after_turn", False):
-                        _restore = getattr(self, "_pending_moa_restore_model", None) or {}
-                        for _key, _value in _restore.items():
-                            if _value is not None:
-                                setattr(self, _key, _value)
-                        self.agent = None
-                        self._pending_moa_restore_model = None
-                        self._pending_moa_disable_after_turn = False
+                    if _backend_sel.name == "antigravity":
+                        from agent.backends.base import BackendTurnRequest, BackendEvent
+                        _req = BackendTurnRequest(
+                            session_id=self.session_id,
+                            profile=getattr(self, "profile_name", "default") or "default",
+                            platform="cli",
+                            principal_id=getattr(self, "principal_id", "local_user") or "local_user",
+                            text=agent_message,
+                            cwd=os.getcwd(),
+                            trusted=(self.backend_router.config.permission_mode == "trusted"),
+                        )
+
+                        def _backend_event_sink(ev: BackendEvent):
+                            if ev.kind == "message_delta" and ev.text and stream_callback:
+                                stream_callback(ev.text)
+
+                        _turn_res = self.backend_router.run_turn(
+                            _req,
+                            _backend_event_sink,
+                            session_override=getattr(self, "_session_backend_override", None),
+                        )
+                        _asst_msg = {"role": "assistant", "content": _turn_res.response}
+                        self.conversation_history.append(_asst_msg)
+                        if self._session_db and self.session_id:
+                            try:
+                                _u_msg = self.conversation_history[-2] if len(self.conversation_history) >= 2 else {"role": "user", "content": _persist_clean_user_message or message}
+                                self._session_db.append_message(self.session_id, _u_msg)
+                                self._session_db.append_message(self.session_id, _asst_msg)
+                                self._session_db.set_session_agent_backend(
+                                    self.session_id, "antigravity", _turn_res.conversation_id or ""
+                                )
+                            except Exception:
+                                pass
+                        result = {
+                            "final_response": _turn_res.response,
+                            "messages": list(self.conversation_history),
+                            "api_calls": 1,
+                            "completed": (_turn_res.status == "SUCCESS"),
+                            "failed": (_turn_res.status != "SUCCESS"),
+                        }
+                    else:
+                        result = self.agent.run_conversation(
+                            user_message=agent_message,
+                            conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
+                            stream_callback=stream_callback,
+                            task_id=self.session_id,
+                            persist_user_message=_persist_clean_user_message,
+                            moa_config=_moa_cfg,
+                        )
+                        if getattr(self, "_pending_moa_disable_after_turn", False):
+                            _restore = getattr(self, "_pending_moa_restore_model", None) or {}
+                            for _key, _value in _restore.items():
+                                if _value is not None:
+                                    setattr(self, _key, _value)
+                            self.agent = None
+                            self._pending_moa_restore_model = None
+                            self._pending_moa_disable_after_turn = False
                 except Exception as exc:
                     logging.error("run_conversation raised: %s", exc, exc_info=True)
                     _summary = getattr(self.agent, '_summarize_api_error', lambda e: str(e)[:300])(exc)

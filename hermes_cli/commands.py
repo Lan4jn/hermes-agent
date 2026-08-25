@@ -242,6 +242,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
     # Configuration
     CommandDef("config", "Show current configuration", "Configuration",
                cli_only=True),
+    CommandDef("backend", "Show or switch interactive agent backend (hermes|antigravity)", "Configuration",
+               args_hint="[hermes|antigravity]",
+               subcommands=("hermes", "antigravity"),
+               busy_policy="reject", busy_handler="backend"),
     CommandDef("model", "Switch model (session-scoped; --global to persist)", "Configuration",
                args_hint="[model] [--provider name] [--global|--session] [--refresh]",
                busy_policy="reject", busy_handler="model"),
@@ -1363,12 +1367,9 @@ _SLACK_PRIORITY_ALIASES = ("btw", "bg")
 #     interactive surface; whoami is a rare debug lookup) — without this
 #     entry /loop tips the registry past the 50-cap and silently clamps
 #     /platform, breaking Telegram parity.
-#   - platform: informational platform/environment lookup; reached via
-#     /hermes platform on Slack. Demoted when /save became gateway-available
-#     (session export is an interactive surface; platform is a rare
-#     informational lookup) — without this entry /save tips the registry
-#     past the 50-cap and silently clamps /platform, breaking parity.
-_SLACK_VIA_HERMES_ONLY = frozenset({"topup", "moa", "debug", "egress", "init", "version", "diff", "update", "heartbeat", "refine", "pause", "whoami", "platform"})
+#   - insights: periodic system insight summary; reached via /hermes insights
+#     on Slack. Demoted when /backend claimed a native slot.
+_SLACK_VIA_HERMES_ONLY = frozenset({"topup", "moa", "debug", "egress", "init", "version", "diff", "update", "heartbeat", "refine", "pause", "whoami", "platform", "insights"})
 
 
 def _sanitize_slack_name(raw: str) -> str:
