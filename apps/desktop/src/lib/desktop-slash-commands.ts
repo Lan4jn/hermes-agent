@@ -236,6 +236,12 @@ const DESKTOP_COMMAND_SPECS: readonly DesktopCommandSpec[] = [
     argumentMode: 'options'
   },
   {
+    name: '/backend',
+    description: 'Show or switch interactive agent backend [hermes|antigravity]',
+    surface: exec(),
+    argumentMode: 'options'
+  },
+  {
     name: '/agents',
     description: 'Show active desktop sessions and running tasks',
     aliases: ['/tasks'],

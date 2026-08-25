@@ -53,15 +53,19 @@ describe('desktop slash command curation', () => {
     expect(isDesktopSlashSuggestion('/compress')).toBe(true)
   })
 
-  it('surfaces /tools, /save, and /personality on the desktop', () => {
+  it('surfaces /tools, /save, /backend, and /personality on the desktop', () => {
     expect(isDesktopSlashSuggestion('/tools')).toBe(true)
     expect(isDesktopSlashSuggestion('/save')).toBe(true)
+    expect(isDesktopSlashSuggestion('/backend')).toBe(true)
     expect(isDesktopSlashSuggestion('/personality')).toBe(true)
     expect(isDesktopSlashCommand('/tools')).toBe(true)
     expect(isDesktopSlashCommand('/save')).toBe(true)
+    expect(isDesktopSlashCommand('/backend')).toBe(true)
     expect(isDesktopSlashCommand('/personality')).toBe(true)
+    expect(resolveDesktopCommand('/backend')?.surface).toEqual({ kind: 'exec' })
     expect(desktopSlashUnavailableMessage('/tools')).toBeNull()
     expect(desktopSlashUnavailableMessage('/save')).toBeNull()
+    expect(desktopSlashUnavailableMessage('/backend')).toBeNull()
     expect(desktopSlashUnavailableMessage('/personality')).toBeNull()
   })
 
