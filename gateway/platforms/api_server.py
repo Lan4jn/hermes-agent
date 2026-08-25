@@ -3626,6 +3626,16 @@ class APIServerAdapter(BasePlatformAdapter):
             response_payload["exec_token"] = token
             response_payload["exec_token_expires_at"] = self._format_message_session_timestamp(expires_at)
 
+        # Antigravity backend turns on /message require explicit API key / bearer auth
+        from agent.backends.config import resolve_backend
+        _cfg = getattr(self, "config", None) or {}
+        _backend_sel = resolve_backend(_cfg, platform="api_server")
+        if _backend_sel.name == "antigravity" and not command_authorized:
+            return web.json_response(
+                {"error": "Unauthorized: API key required for Antigravity backend turns on /message"},
+                status=401,
+            )
+
         if message:
             try:
                 result, _usage = await self._run_agent(

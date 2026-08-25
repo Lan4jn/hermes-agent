@@ -6414,7 +6414,18 @@ class TurnRunner:
                 _conversation_kwargs["moa_config"] = ctx.moa_config
             if _persist_user_timestamp_override is not None:
                 _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
-            result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
+            from gateway.interactive_backend import run_gateway_interactive_turn
+            backend_result = run_gateway_interactive_turn(
+                runner=self._runner,
+                ctx=ctx,
+                api_run_message=_api_run_message,
+                stream_consumer=_stream_consumer,
+                media_paths=_native_imgs if "_native_imgs" in locals() and _native_imgs else None,
+            )
+            if backend_result is not None:
+                result = backend_result
+            else:
+                result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
         finally:
             unregister_gateway_notify(_approval_session_key)
             # Cancel any pending clarify entries so blocked agent

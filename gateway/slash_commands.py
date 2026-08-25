@@ -1748,6 +1748,51 @@ class GatewaySlashCommandsMixin:
             getattr(getattr(event, "source", None), "platform", None),
         )
 
+    async def _handle_backend_command(self, event: MessageEvent) -> str:
+        """Handle /backend command — query or switch agent backend for this chat session."""
+        raw_args = event.get_command_args().strip().lower()
+        source = event.source
+        session_key = build_session_key(source)
+        platform_key = (
+            source.platform.value
+            if hasattr(source.platform, "value")
+            else str(source.platform)
+        )
+
+        from agent.backends.router import BackendRouter
+        from gateway.run import _load_gateway_config
+
+        config = _load_gateway_config(getattr(self, "_config_path", None))
+        session_db = getattr(
+            getattr(self, "_session_db", None), "_db", getattr(self, "_session_db", None)
+        )
+        router = BackendRouter(config=config, session_db=session_db)
+
+        current_override = None
+        if session_db:
+            try:
+                row = session_db.get_session(session_key)
+                if row and row["agent_backend"]:
+                    current_override = row["agent_backend"]
+            except Exception:
+                pass
+
+        if not raw_args:
+            selection = router.resolve(
+                platform=platform_key, session_override=current_override
+            )
+            return f"Backend: {selection.name} (from {selection.source})"
+
+        if raw_args in {"hermes", "antigravity"}:
+            if session_db:
+                try:
+                    session_db.set_session_agent_backend(session_key, raw_args)
+                except Exception as exc:
+                    return f"❌ Failed to switch backend: {exc}"
+            return f"✓ Switched backend to {raw_args} for current session"
+
+        return f"❌ Invalid backend: {raw_args}. Supported backends: hermes, antigravity"
+
     async def _handle_model_command(self, event: MessageEvent) -> Optional[str]:
         """Handle /model command — switch model.
 
