@@ -11061,7 +11061,20 @@ def _run_prompt_submit(
             )
             _usage_stop, _usage_thread = _start_usage_ticker(sid, agent)
             try:
-                result = agent.run_conversation(run_message, **run_kwargs)
+                from tui_gateway.interactive_backend import run_interactive_backend_turn
+                backend_result = run_interactive_backend_turn(
+                    session=session,
+                    sid=sid,
+                    run_message=run_message,
+                    stream_cb=_stream,
+                    emit_fn=_emit,
+                    history=list(history),
+                    user_text=text if isinstance(text, str) else "",
+                )
+                if backend_result is not None:
+                    result = backend_result
+                else:
+                    result = agent.run_conversation(run_message, **run_kwargs)
             finally:
                 # Stop AND join before anything below emits: an in-flight tick
                 # surviving past message.complete would roll the client's final
