@@ -211,3 +211,55 @@ def test_gateway_interactive_turn_interrupt(tmp_path, fake_agy_config, session_d
     assert ok is True
     t.join(timeout=2.0)
     pool.shutdown()
+
+
+def test_gateway_turn_derives_profile_from_context_dynamically(tmp_path, fake_agy_config, session_db):
+    """Gateway interactive turns derive profile dynamically from TurnContext/SessionSource."""
+    pool1 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    pool2 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    session_db.create_session("gw-tg-p1", source="telegram", model="test-model")
+    session_db.create_session("gw-tg-p2", source="telegram", model="test-model")
+
+    runner = SimpleNamespace(
+        config=GatewayConfig(),
+        raw_config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        _session_db=session_db,
+        profile_name="default",  # runner fallback default
+        _backend_routers={
+            "work": BackendRouter(
+                config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+                session_db=session_db,
+                pool=pool1,
+            ),
+            "personal": BackendRouter(
+                config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+                session_db=session_db,
+                pool=pool2,
+            ),
+        },
+    )
+
+    ctx_work = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-tg-p1",
+        message="work message",
+        profile="work",
+    )
+    res_work = run_gateway_interactive_turn(runner=runner, ctx=ctx_work, api_run_message="work message")
+    assert res_work["final_response"] == "reply:work message"
+    assert pool1.session_pid("work", "telegram", "gw-tg-p1") is not None
+    assert pool2.session_pid("work", "telegram", "gw-tg-p1") is None
+
+    ctx_personal = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="456", user_id="u2"),
+        session_id="gw-tg-p2",
+        message="personal message",
+        profile="personal",
+    )
+    res_personal = run_gateway_interactive_turn(runner=runner, ctx=ctx_personal, api_run_message="personal message")
+    assert res_personal["final_response"] == "reply:personal message"
+    assert pool2.session_pid("personal", "telegram", "gw-tg-p2") is not None
+    assert pool1.session_pid("personal", "telegram", "gw-tg-p2") is None
+
+    pool1.shutdown()
+    pool2.shutdown()

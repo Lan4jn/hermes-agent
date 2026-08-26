@@ -95,7 +95,12 @@ def run_gateway_interactive_turn(
         else str(ctx.source.platform)
     )
 
-    profile = getattr(runner, "profile_name", "default") or "default"
+    profile = (
+        getattr(ctx, "profile", None)
+        or (hasattr(ctx, "source") and getattr(ctx.source, "profile", None))
+        or getattr(runner, "profile_name", "default")
+        or "default"
+    )
     raw_cfg = resolve_runner_raw_config(runner, ctx=ctx)
     router = get_gateway_backend_router(runner, profile=profile, raw_config=raw_cfg)
     session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
@@ -135,7 +140,7 @@ def run_gateway_interactive_turn(
 
     req = BackendTurnRequest(
         session_id=ctx.session_id,
-        profile=getattr(runner, "profile_name", "default") or "default",
+        profile=profile,
         platform=platform_key,
         principal_id=ctx.source.user_id or "gateway_user",
         text=prompt_text,
