@@ -26,7 +26,7 @@ def fake_agy_config():
     )
     return AntigravityConfig(
         enabled=True,
-        command=f"{sys.executable} {fake_script}",
+        command=f'"{sys.executable}" "{fake_script}"',
         model="gemini-3.7-flash-high",
         effort="high",
         permission_mode="strict",
@@ -126,4 +126,50 @@ def test_tui_interactive_backend_routes_to_antigravity(tmp_path, fake_agy_config
     assert row["agent_backend"] == "antigravity"
     assert row["backend_conversation_id"] == "fake-conversation-1"
 
+    pool.shutdown()
+
+
+def test_tui_interactive_backend_interrupt(tmp_path, fake_agy_config, session_db):
+    from tui_gateway.interactive_backend import interrupt_tui_interactive_backend_turn
+
+    pool = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    router = BackendRouter(
+        config={"agent_backends": {"antigravity": {"enabled": True}}},
+        session_db=session_db,
+        pool=pool,
+    )
+    session_db.create_session("gw-session-intr", source="tui", model="test-model")
+
+    session = {
+        "session_id": "gw-session-intr",
+        "platform": "tui",
+        "agent_backend_override": "antigravity",
+        "profile": "default",
+        "history_lock": threading.Lock(),
+        "_backend_router": router,
+    }
+
+    # Start a turn in background thread
+    def _run_slow():
+        try:
+            run_interactive_backend_turn(
+                session=session,
+                sid="ui-sid-intr",
+                run_message="TIMEOUT",
+                stream_cb=lambda s: None,
+                emit_fn=lambda t, s, p: None,
+                history=[],
+            )
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run_slow, daemon=True)
+    t.start()
+    import time
+    time.sleep(0.5)
+
+    # Interrupt
+    ok = interrupt_tui_interactive_backend_turn(session, "ui-sid-intr")
+    assert ok is True
+    t.join(timeout=2.0)
     pool.shutdown()

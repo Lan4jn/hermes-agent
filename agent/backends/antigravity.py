@@ -92,7 +92,7 @@ class AntigravitySession:
         self._conversation_id = conversation_id
         self._timeout_seconds = timeout_seconds
         self._process: subprocess.Popen[bytes] | None = None
-        self._stdout_events: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._stdout_events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=1024)
         self._stderr_tail: deque[str] = deque(maxlen=40)
         self._stderr_lock = threading.Lock()
         self._turn_lock = threading.Lock()
@@ -212,7 +212,7 @@ class AntigravitySession:
             if self._config.proxy_url:
                 for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
                     env[key] = self._config.proxy_url
-            self._stdout_events = queue.Queue()
+            self._stdout_events = queue.Queue(maxsize=1024)
             with self._stderr_lock:
                 self._stderr_tail.clear()
             popen_kwargs: dict[str, Any] = {
@@ -271,20 +271,39 @@ class AntigravitySession:
             while True:
                 raw = pipe.readline(_STDOUT_LINE_LIMIT + 1)
                 if not raw:
-                    self._stdout_events.put(("eof", None))
+                    try:
+                        self._stdout_events.put(("eof", None), timeout=5.0)
+                    except Exception:
+                        pass
                     return
                 if len(raw) > _STDOUT_LINE_LIMIT or not raw.endswith(b"\n"):
-                    self._stdout_events.put(("error", "Antigravity stdout line exceeded limit"))
+                    try:
+                        self._stdout_events.put(("error", "Antigravity stdout line exceeded limit"), timeout=5.0)
+                    except Exception:
+                        pass
                     return
                 try:
                     text = raw.decode("utf-8").rstrip("\r\n")
                 except UnicodeDecodeError:
-                    self._stdout_events.put(("error", "Antigravity stdout was not valid UTF-8"))
+                    try:
+                        self._stdout_events.put(("error", "Antigravity stdout was not valid UTF-8"), timeout=5.0)
+                    except Exception:
+                        pass
                     return
                 if len(text) > _STDOUT_LINE_LIMIT:
-                    self._stdout_events.put(("error", "Antigravity stdout line exceeded limit"))
+                    try:
+                        self._stdout_events.put(("error", "Antigravity stdout line exceeded limit"), timeout=5.0)
+                    except Exception:
+                        pass
                     return
-                self._stdout_events.put(("line", text))
+                try:
+                    self._stdout_events.put(("line", text), timeout=5.0)
+                except queue.Full:
+                    try:
+                        self._stdout_events.put(("error", "Antigravity stdout queue exceeded limit"), timeout=1.0)
+                    except Exception:
+                        pass
+                    return
         finally:
             pipe.close()
 

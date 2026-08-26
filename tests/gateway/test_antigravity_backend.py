@@ -169,3 +169,45 @@ async def test_gateway_slash_backend_command_dispatch(tmp_path, session_db):
     reply = await gw._handle_backend_command(event)
     assert "antigravity" in reply
     assert "session" in reply
+
+
+def test_gateway_interactive_turn_interrupt(tmp_path, fake_agy_config, session_db):
+    import threading
+    import time
+    from gateway.interactive_backend import interrupt_gateway_turn
+
+    pool = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    session_db.create_session("gw-intr-1", source="telegram", model="test-model")
+
+    runner = SimpleNamespace(
+        config=GatewayConfig(),
+        raw_config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        _session_db=session_db,
+        profile_name="default",
+        _backend_router=BackendRouter(
+            config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+            session_db=session_db,
+            pool=pool,
+        ),
+    )
+
+    ctx = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-intr-1",
+        message="TIMEOUT",
+    )
+
+    def _run_slow():
+        try:
+            run_gateway_interactive_turn(runner=runner, ctx=ctx, api_run_message="TIMEOUT")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run_slow, daemon=True)
+    t.start()
+    time.sleep(0.5)
+
+    ok = interrupt_gateway_turn(runner, session_id="gw-intr-1", platform="telegram", profile="default")
+    assert ok is True
+    t.join(timeout=2.0)
+    pool.shutdown()

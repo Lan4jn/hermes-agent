@@ -181,3 +181,14 @@ def run_gateway_interactive_turn(
         "failed": (turn_res.status != "SUCCESS"),
         "usage": turn_res.usage,
     }
+
+
+def interrupt_gateway_turn(
+    runner: Any,
+    session_id: str,
+    platform: str,
+    profile: str = "default",
+) -> bool:
+    """Interrupt an in-flight Antigravity turn for the given session."""
+    router = get_gateway_backend_router(runner, profile=profile)
+    return router.interrupt(profile=profile, platform=platform, session_id=session_id)

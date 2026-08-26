@@ -366,6 +366,14 @@ class ComputeHost:
             agent = session.get("agent")
             if agent is not None:
                 request_hard_interrupt(agent)
+            try:
+                from tui_gateway.interactive_backend import (
+                    interrupt_tui_interactive_backend_turn,
+                )
+
+                interrupt_tui_interactive_backend_turn(session, sid)
+            except Exception:
+                pass
             with session.get("history_lock", threading.Lock()):
                 session["_turn_cancel_requested"] = True
                 session["queued_prompt"] = None

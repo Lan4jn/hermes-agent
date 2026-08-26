@@ -74,8 +74,13 @@ def run_interactive_backend_turn(
         return None
 
     # Handle Antigravity turn
-    session_key = session.get("session_key") or sid
-    profile = session.get("profile") or "default"
+    session_key = session.get("session_key") or session.get("session_id") or sid
+    profile = (
+        session.get("profile")
+        or getattr(agent, "profile_name", "default")
+        or session.get("profile_name", "default")
+        or "default"
+    )
     principal_id = session.get("user_id") or "local_user"
     trusted = router.config.permission_mode == "trusted"
 
@@ -136,3 +141,18 @@ def run_interactive_backend_turn(
         "failed": (turn_res.status != "SUCCESS"),
         "usage": turn_res.usage,
     }
+
+
+def interrupt_tui_interactive_backend_turn(session: dict, sid: str) -> bool:
+    """Interrupt an in-flight Antigravity turn for a TUI session."""
+    router = get_tui_backend_router(session)
+    agent = session.get("agent")
+    profile = (
+        session.get("profile")
+        or getattr(agent, "profile_name", "default")
+        or session.get("profile_name", "default")
+        or "default"
+    )
+    platform = session.get("platform", "tui") or "tui"
+    session_key = session.get("session_key") or session.get("session_id") or sid
+    return router.interrupt(profile=profile, platform=platform, session_id=session_key)
