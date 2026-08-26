@@ -213,6 +213,57 @@ def test_gateway_interactive_turn_interrupt(tmp_path, fake_agy_config, session_d
     pool.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_gateway_stop_command_interrupts_antigravity_process(tmp_path, fake_agy_config, session_db):
+    import asyncio
+    import threading
+    from gateway.run import GatewayRunner
+
+    pool = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    session_db.create_session("gw-stop-1", source="telegram", model="test-model")
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1")
+
+    router = BackendRouter(
+        config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        session_db=session_db,
+        pool=pool,
+    )
+
+    gw = GatewayRunner.__new__(GatewayRunner)
+    gw.config = GatewayConfig()
+    gw.raw_config = {"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}}
+    gw._session_db = session_db
+    gw._config_path = None
+    gw.profile_name = "default"
+    gw._backend_routers = {"default": router}
+    gw._running_agents = {}
+    gw._peek_session_state = lambda key: None
+    gw._invalidate_session_run_generation = lambda key, reason="": 1
+    ctx = SimpleNamespace(
+        source=source,
+        session_id="gw-stop-1",
+        message="TIMEOUT",
+    )
+
+    def _run_slow():
+        try:
+            run_gateway_interactive_turn(runner=gw, ctx=ctx, api_run_message="TIMEOUT")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run_slow, daemon=True)
+    t.start()
+    await asyncio.sleep(0.5)
+
+    # Invoke the actual Gateway _busy_stop_command
+    event = MessageEvent(source=source, text="/stop", raw_message="/stop")
+    reply = await gw._busy_stop_command(event, "gw-stop-1", source)
+    assert reply is not None
+
+    t.join(timeout=2.0)
+    pool.shutdown()
+
+
 def test_gateway_turn_derives_profile_from_context_dynamically(tmp_path, fake_agy_config, session_db):
     """Gateway interactive turns derive profile dynamically from TurnContext/SessionSource."""
     pool1 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
