@@ -66,7 +66,31 @@ class BackendRouter:
             platform=request.platform, session_override=session_override
         )
         if selection.name == "antigravity":
-            result = self._pool.run_turn(request, events)
+            req_to_run = request
+            if (
+                not request.conversation_id
+                and self._session_db is not None
+                and request.session_id
+            ):
+                try:
+                    row = self._session_db.get_session(request.session_id)
+                    if row and row.get("backend_conversation_id"):
+                        saved_conv = row["backend_conversation_id"]
+                        req_to_run = BackendTurnRequest(
+                            session_id=request.session_id,
+                            profile=request.profile,
+                            platform=request.platform,
+                            principal_id=request.principal_id,
+                            text=request.text,
+                            cwd=request.cwd,
+                            media_paths=request.media_paths,
+                            trusted=request.trusted,
+                            conversation_id=saved_conv,
+                        )
+                except Exception:
+                    pass
+
+            result = self._pool.run_turn(req_to_run, events)
             if self._session_db is not None and request.session_id:
                 try:
                     self._session_db.set_session_agent_backend(

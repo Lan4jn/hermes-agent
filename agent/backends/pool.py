@@ -197,7 +197,10 @@ class AntigravitySessionPool:
 
                 if len(self._entries) < self._config.max_sessions:
                     cwd = request.cwd or self._cwd
-                    session = AntigravitySession(self._config, cwd)
+                    conv_id = request.conversation_id or ""
+                    session = AntigravitySession(
+                        self._config, cwd, conversation_id=conv_id
+                    )
                     new_entry = _PoolEntry(session)
                     new_entry.leases = 1
                     self._entries[key] = new_entry

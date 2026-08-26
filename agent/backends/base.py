@@ -15,6 +15,7 @@ class BackendTurnRequest:
     cwd: str | None
     media_paths: tuple[str, ...] = ()
     trusted: bool = False
+    conversation_id: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "media_paths", tuple(self.media_paths))

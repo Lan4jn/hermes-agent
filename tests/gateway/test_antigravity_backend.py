@@ -381,3 +381,82 @@ def test_gateway_media_and_sessiondb_invariants(tmp_path, fake_agy_config, sessi
     assert row["backend_conversation_id"] == "fake-conversation-1"
 
     pool.shutdown()
+
+
+def test_gateway_restart_resumes_persisted_conversation_id(tmp_path, fake_agy_config, session_db):
+    """Gateway restart/reinstantiation resumes the conversation ID saved in SessionDB."""
+    pool1 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    session_db.create_session("gw-restart-1", source="telegram", model="test-model")
+
+    runner1 = SimpleNamespace(
+        config=GatewayConfig(),
+        raw_config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        _session_db=session_db,
+        profile_name="default",
+        _backend_router=BackendRouter(
+            config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+            session_db=session_db,
+            pool=pool1,
+        ),
+    )
+
+    ctx1 = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-restart-1",
+        message="first question",
+        profile="default",
+    )
+    res1 = run_gateway_interactive_turn(runner=runner1, ctx=ctx1, api_run_message="first question")
+    assert res1["completed"] is True
+
+    # Check that session_db holds the persisted conversation ID
+    row1 = session_db.get_session("gw-restart-1")
+    assert row1["backend_conversation_id"] == "fake-conversation-1"
+
+    # Simulate shutdown / restart: destroy pool1, create pool2 and runner2
+    pool1.shutdown()
+
+    pool2 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    router2 = BackendRouter(
+        config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        session_db=session_db,
+        pool=pool2,
+    )
+    runner2 = SimpleNamespace(
+        config=GatewayConfig(),
+        raw_config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        _session_db=session_db,
+        profile_name="default",
+        _backend_router=router2,
+    )
+
+    ctx2 = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-restart-1",
+        message="second question after restart",
+        profile="default",
+    )
+    res2 = run_gateway_interactive_turn(runner=runner2, ctx=ctx2, api_run_message="second question after restart")
+    assert res2["completed"] is True
+
+    # Assert pool2's created session carried the resumed conversation ID
+    entry = pool2._entries.get(("default", "telegram", "gw-restart-1"))
+    assert entry is not None
+    assert entry.session.conversation_id == "fake-conversation-1"
+
+    # Also test with a custom pre-seeded conversation ID
+    session_db.create_session("gw-seeded-1", source="telegram", model="test-model")
+    session_db.set_session_agent_backend("gw-seeded-1", "antigravity", "custom-resumed-999")
+    ctx_seeded = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-seeded-1",
+        message="question on seeded session",
+        profile="default",
+    )
+    res_seeded = run_gateway_interactive_turn(runner=runner2, ctx=ctx_seeded, api_run_message="question on seeded session")
+    assert res_seeded["completed"] is True
+    entry_seeded = pool2._entries.get(("default", "telegram", "gw-seeded-1"))
+    assert entry_seeded is not None
+    assert entry_seeded.session.conversation_id == "custom-resumed-999"
+
+    pool2.shutdown()
