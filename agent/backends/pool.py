@@ -121,35 +121,46 @@ class AntigravitySessionPool:
     def shutdown(self) -> None:
         with self._lock:
             self._closed = True
-            entries = list(self._entries.values())
-            self._entries.clear()
-        for entry in entries:
+            entries = list(self._entries.items())
+        for key, entry in entries:
             try:
                 entry.session.interrupt()
             except Exception:
                 pass
             try:
-                entry.session.close()
+                entry.lock.acquire()
+                try:
+                    entry.session.close()
+                finally:
+                    entry.lock.release()
+                with self._lock:
+                    if self._entries.get(key) is entry:
+                        self._entries.pop(key, None)
             except Exception:
-                logger.debug("error during pool shutdown", exc_info=True)
+                logger.debug("error during pool shutdown for %s", key, exc_info=True)
 
     def cleanup_idle(self) -> None:
         """Close sessions that have been idle longer than the timeout."""
         now = time.monotonic()
-        to_close: list[tuple[_PoolKey, _PoolEntry]] = []
+        candidates: list[tuple[_PoolKey, _PoolEntry]] = []
         with self._lock:
-            for key, entry in list(self._entries.items()):
+            for key, entry in self._entries.items():
                 if (
                     entry.leases == 0
                     and (now - entry.last_used) >= self._config.idle_timeout_seconds
                 ):
-                    self._entries.pop(key, None)
-                    to_close.append((key, entry))
-        for key, entry in to_close:
+                    candidates.append((key, entry))
+        for key, entry in candidates:
+            entry.lock.acquire()
             try:
                 entry.session.close()
+                with self._lock:
+                    if self._entries.get(key) is entry and entry.leases == 0:
+                        self._entries.pop(key, None)
             except Exception:
                 logger.debug("error closing idle session %s", key, exc_info=True)
+            finally:
+                entry.lock.release()
 
     # ------------------------------------------------------------------
     # Introspection
@@ -173,59 +184,76 @@ class AntigravitySessionPool:
     # ------------------------------------------------------------------
 
     def _acquire(self, key: _PoolKey, request: BackendTurnRequest) -> _PoolEntry:
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("session pool is shut down")
-            entry = self._entries.get(key)
-            if entry is None:
-                if len(self._entries) >= self._config.max_sessions:
-                    self._evict_lru_idle_locked()
-                if len(self._entries) >= self._config.max_sessions:
+        while True:
+            evict_candidate: tuple[_PoolKey, _PoolEntry] | None = None
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError("session pool is shut down")
+                entry = self._entries.get(key)
+                if entry is not None:
+                    entry.leases += 1
+                    entry.last_used = time.monotonic()
+                    return entry
+
+                if len(self._entries) < self._config.max_sessions:
+                    cwd = request.cwd or self._cwd
+                    session = AntigravitySession(self._config, cwd)
+                    new_entry = _PoolEntry(session)
+                    new_entry.leases = 1
+                    self._entries[key] = new_entry
+                    return new_entry
+
+                # Need eviction: find candidate inside lock
+                oldest_key: _PoolKey | None = None
+                oldest_time = float("inf")
+                for k, e in self._entries.items():
+                    if e.leases == 0 and e.last_used < oldest_time:
+                        oldest_time = e.last_used
+                        oldest_key = k
+                if oldest_key is not None:
+                    evict_candidate = (oldest_key, self._entries[oldest_key])
+                else:
                     raise RuntimeError(
                         "all backend sessions are busy — capacity exhausted"
                     )
-                cwd = request.cwd or self._cwd
-                session = AntigravitySession(self._config, cwd)
-                entry = _PoolEntry(session)
-                self._entries[key] = entry
-            entry.leases += 1
-            entry.last_used = time.monotonic()
-            return entry
+
+            # Evict outside global lock
+            if evict_candidate is not None:
+                cand_key, cand_entry = evict_candidate
+                cand_entry.lock.acquire()
+                try:
+                    cand_entry.session.close()
+                    with self._lock:
+                        if (
+                            self._entries.get(cand_key) is cand_entry
+                            and cand_entry.leases == 0
+                        ):
+                            self._entries.pop(cand_key, None)
+                finally:
+                    cand_entry.lock.release()
 
     def _release(self, key: _PoolKey, entry: _PoolEntry, failed: bool = False) -> None:
-        session_to_close = None
+        should_close = False
         with self._lock:
             entry.leases = max(0, entry.leases - 1)
             entry.last_used = time.monotonic()
             if failed:
                 entry.marked_fatal = True
             if entry.leases == 0 and entry.marked_fatal:
-                if self._entries.get(key) is entry:
-                    self._entries.pop(key, None)
-                session_to_close = entry.session
+                should_close = True
 
-        if session_to_close is not None:
+        if should_close:
             try:
-                session_to_close.close()
+                entry.lock.acquire()
+                try:
+                    entry.session.close()
+                finally:
+                    entry.lock.release()
+                with self._lock:
+                    if self._entries.get(key) is entry and entry.leases == 0:
+                        self._entries.pop(key, None)
             except Exception:
-                pass
-
-    def _evict_lru_idle_locked(self) -> None:
-        """Evict the least-recently-used idle entry. Caller holds ``_lock``."""
-        oldest_key: _PoolKey | None = None
-        oldest_time = float("inf")
-        for key, entry in self._entries.items():
-            if entry.leases == 0 and entry.last_used < oldest_time:
-                oldest_time = entry.last_used
-                oldest_key = key
-        if oldest_key is not None:
-            entry = self._entries.pop(oldest_key)
-            try:
-                entry.session.close()
-            except Exception:
-                logger.debug(
-                    "error evicting idle session %s", oldest_key, exc_info=True
-                )
+                logger.debug("error closing fatal session %s", key, exc_info=True)
 
     def _try_recovery(
         self,

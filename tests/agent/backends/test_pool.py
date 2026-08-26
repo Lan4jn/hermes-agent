@@ -523,3 +523,44 @@ class TestPoolInfo:
                     pool.run_turn(req, lambda e: None)
                 mock_rec.assert_not_called()
         pool.shutdown()
+
+    def test_cleanup_idle_failure_retains_entry_and_tracking(self):
+        cfg = _config(idle_timeout_seconds=1)
+        pool = AntigravitySessionPool(cfg)
+        key = ("default", "cli", "s1")
+        req = _request("hello", session_id="s1")
+        pool.run_turn(req, lambda e: None)
+        assert pool.active_count == 1
+        entry = pool._entries.get(key)
+        assert entry is not None
+
+        # Simulate idle timeout
+        entry.last_used = time.monotonic() - 10
+
+        # When close fails during cleanup_idle, entry MUST be retained
+        with patch.object(entry.session, "close", side_effect=RuntimeError("cleanup close failed")):
+            pool.cleanup_idle()
+
+        assert pool.active_count == 1
+        assert pool._entries.get(key) is entry
+        pool.shutdown()
+
+    def test_eviction_failure_retains_entry_and_tracking(self):
+        cfg = _config(max_sessions=1)
+        pool = AntigravitySessionPool(cfg)
+        key1 = ("default", "cli", "s1")
+        req1 = _request("hello", session_id="s1")
+        pool.run_turn(req1, lambda e: None)
+        assert pool.active_count == 1
+        entry1 = pool._entries.get(key1)
+        assert entry1 is not None
+
+        # Now attempting to acquire s2 will trigger eviction of s1.
+        # If s1.close() fails, s1 MUST NOT be discarded from tracking.
+        with patch.object(entry1.session, "close", side_effect=RuntimeError("evict close failed")):
+            with pytest.raises(RuntimeError, match="capacity exhausted|evict close failed"):
+                pool.run_turn(_request("second", session_id="s2"), lambda e: None)
+
+        assert pool.active_count == 1
+        assert pool._entries.get(key1) is entry1
+        pool.shutdown()
