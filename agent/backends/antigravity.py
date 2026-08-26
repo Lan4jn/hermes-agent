@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 import json
 import os
 import queue
@@ -67,6 +68,7 @@ _CHILD_ENV_ALLOWLIST = {
     "CURL_CA_BUNDLE",
     "NO_PROXY",
     "no_proxy",
+    "FAKE_AGY_COUNTER",
 }
 _OAUTH_SECRET_RE = re.compile(
     r"(?i)(\boauth[_-]?(?:(?:access|refresh)[_-]?)?token\b\s*(?:=|:\s*)[\"']?)[^\s,\"'}]+"
@@ -81,6 +83,23 @@ def _redact_process_text(value: str) -> str:
         redact_url_credentials=True,
     )
     return _OAUTH_SECRET_RE.sub(r"\1***", redacted)
+
+
+@dataclass(frozen=True)
+class AntigravitySessionState:
+    started: bool
+    alive: bool
+    last_turn_succeeded: bool
+    conversation_id: str
+
+    @property
+    def resume_safe(self) -> bool:
+        return (
+            self.started
+            and not self.alive
+            and self.last_turn_succeeded
+            and bool(self.conversation_id)
+        )
 
 
 class AntigravitySession:
@@ -107,6 +126,8 @@ class AntigravitySession:
         self._effective_metadata: dict[str, Any] = {}
         self._reader_threads: list[threading.Thread] = []
         self._started = False
+        self._last_turn_succeeded = False
+        self._stdout_eof = False
         self._fatal = False
         self._closed = False
 
@@ -114,12 +135,16 @@ class AntigravitySession:
     def pid(self) -> int | None:
         with self._state_lock:
             process = self._process
-            return process.pid if process is not None and process.poll() is None else None
+            if process is None or self._stdout_eof or process.poll() is not None:
+                return None
+            return process.pid
 
     @property
     def alive(self) -> bool:
         with self._state_lock:
-            return self._process is not None and self._process.poll() is None
+            if self._process is None or self._stdout_eof:
+                return False
+            return self._process.poll() is None
 
     @property
     def fatal(self) -> bool:
@@ -129,6 +154,25 @@ class AntigravitySession:
     @property
     def conversation_id(self) -> str:
         return self._conversation_id
+
+    @property
+    def state(self) -> AntigravitySessionState:
+        with self._state_lock:
+            is_alive = (
+                self._process is not None
+                and not self._stdout_eof
+                and self._process.poll() is None
+            )
+            return AntigravitySessionState(
+                started=self._started,
+                alive=is_alive,
+                last_turn_succeeded=self._last_turn_succeeded,
+                conversation_id=self._conversation_id,
+            )
+
+    @property
+    def resume_safe(self) -> bool:
+        return self.state.resume_safe
 
     @property
     def effective_metadata(self) -> dict[str, Any]:
@@ -144,6 +188,7 @@ class AntigravitySession:
             with self._state_lock:
                 if self._fatal or self._closed:
                     raise self._error("terminated Antigravity session cannot be reused")
+                self._last_turn_succeeded = False
             deadline = time.monotonic() + self._timeout_seconds
             try:
                 process = self._ensure_process(deadline)
@@ -284,6 +329,8 @@ class AntigravitySession:
             while True:
                 raw = pipe.readline(_STDOUT_LINE_LIMIT + 1)
                 if not raw:
+                    with self._state_lock:
+                        self._stdout_eof = True
                     try:
                         self._stdout_events.put(("eof", None), timeout=5.0)
                     except Exception:
@@ -412,6 +459,8 @@ class AntigravitySession:
             usage = result.get("usage", {})
             if not isinstance(response, str) or not isinstance(usage, dict):
                 raise self._error("Antigravity SUCCESS result had invalid fields")
+            with self._state_lock:
+                self._last_turn_succeeded = True
             return BackendTurnResult(
                 response=response,
                 conversation_id=self._conversation_id,

@@ -90,6 +90,23 @@ def main() -> int:
             sys.stderr.write("invalid user event shape\n")
             return 2
         text = request["message"]["content"]
+        counter_file = os.environ.get("FAKE_AGY_COUNTER")
+        if counter_file:
+            try:
+                with open(counter_file, "a", encoding="utf-8") as f:
+                    f.write(text + "\n")
+            except Exception:
+                pass
+        if text == "ERROR_AFTER_ACCEPT":
+            emit({
+                "event": "result",
+                "result": {
+                    "conversation_id": conversation_id,
+                    "status": "ERROR",
+                    "error": "simulated terminal error after accept",
+                },
+            })
+            return 1
         if text == "MALFORMED":
             sys.stdout.write("{not-json}\n")
             sys.stdout.flush()

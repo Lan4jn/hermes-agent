@@ -402,6 +402,7 @@ class TestCrashRecovery:
             pool.run_turn(
                 _request("EXIT_AFTER_RESULT", session_id="s1"), lambda e: None
             )
+            time.sleep(0.2)
             # Process should have exited after this turn
 
             # Next turn should recover with --conversation
@@ -421,12 +422,14 @@ class TestCrashRecovery:
             pool.run_turn(
                 _request("EXIT_AFTER_RESULT", session_id="s1"), lambda e: None
             )
+            time.sleep(0.2)
             # First recovery
             pool.run_turn(_request("recovered", session_id="s1"), lambda e: None)
             # Force exit again
             pool.run_turn(
                 _request("EXIT_AFTER_RESULT", session_id="s1"), lambda e: None
             )
+            time.sleep(0.2)
 
             # Second recovery should fail
             with pytest.raises(RuntimeError):
@@ -518,7 +521,7 @@ class TestPoolInfo:
 
         # When session is alive and raises PermissionError, recovery MUST NOT be attempted
         with patch.object(entry.session, "run_turn", side_effect=PermissionError("denied")):
-            with patch.object(pool, "_try_recovery") as mock_rec:
+            with patch.object(pool, "_resume_entry_before_turn") as mock_rec:
                 with pytest.raises(PermissionError, match="denied"):
                     pool.run_turn(req, lambda e: None)
                 mock_rec.assert_not_called()
@@ -563,4 +566,13 @@ class TestPoolInfo:
 
         assert pool.active_count == 1
         assert pool._entries.get(key1) is entry1
+        pool.shutdown()
+
+    def test_post_submit_terminal_error_is_never_replayed(self, tmp_path, monkeypatch):
+        counter = tmp_path / "turns.jsonl"
+        monkeypatch.setenv("FAKE_AGY_COUNTER", str(counter))
+        pool = AntigravitySessionPool(_config())
+        with pytest.raises(RuntimeError):
+            pool.run_turn(_request("ERROR_AFTER_ACCEPT"), lambda event: None)
+        assert counter.read_text(encoding="utf-8").splitlines() == ["ERROR_AFTER_ACCEPT"]
         pool.shutdown()

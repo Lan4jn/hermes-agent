@@ -647,3 +647,29 @@ def test_media_paths_are_rendered_into_user_content(tmp_path):
         assert "- /tmp/safe_doc.pdf" in res.response
     finally:
         session.close()
+
+
+def test_session_state_and_resume_safe_lifecycle(tmp_path):
+    session = AntigravitySession(config(), cwd=str(tmp_path))
+    assert session.state.started is False
+    assert session.state.alive is False
+    assert session.state.last_turn_succeeded is False
+    assert session.resume_safe is False
+
+    # Turn 1: success
+    res = session.run_turn(request("hello"), lambda e: None)
+    assert res.status == "SUCCESS"
+    assert session.state.started is True
+    assert session.state.alive is True
+    assert session.state.last_turn_succeeded is True
+    assert session.resume_safe is False
+
+    # Turn 2: EXIT_AFTER_RESULT
+    res2 = session.run_turn(request("EXIT_AFTER_RESULT"), lambda e: None)
+    assert res2.status == "SUCCESS"
+    time.sleep(0.3)
+    # Process is now dead, but last turn succeeded -> resume_safe is True
+    assert session.state.alive is False
+    assert session.state.last_turn_succeeded is True
+    assert session.resume_safe is True
+    session.close()

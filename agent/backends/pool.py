@@ -77,17 +77,10 @@ class AntigravitySessionPool:
         failed = False
         entry.lock.acquire()
         try:
+            if getattr(entry.session, "resume_safe", False) and not entry.recovered:
+                self._resume_entry_before_turn(key, entry, request)
             try:
                 result = entry.session.run_turn(request, events)
-            except (RuntimeError, OSError):
-                # Process may have died — attempt one-time recovery if fatal and dead
-                is_dead = not entry.session.is_alive()
-                is_fatal = getattr(entry.session, "is_fatal", lambda: True)()
-                if is_dead and is_fatal:
-                    result = self._try_recovery(key, entry, request, events)
-                else:
-                    failed = True
-                    raise
             except Exception:
                 failed = True
                 raise
@@ -258,30 +251,19 @@ class AntigravitySessionPool:
             except Exception:
                 logger.debug("error closing fatal session %s", key, exc_info=True)
 
-    def _try_recovery(
+    def _resume_entry_before_turn(
         self,
         key: _PoolKey,
         entry: _PoolEntry,
         request: BackendTurnRequest,
-        events: BackendEventSink,
-    ) -> BackendTurnResult:
-        """Attempt one-time crash recovery using ``--conversation``."""
+    ) -> None:
+        """Resume a dead session between turns using ``--conversation`` before running."""
         conv_id = entry.session.conversation_id
-        if not conv_id or entry.recovered:
-            # No conversation to resume or already recovered once.
-            with self._lock:
-                if self._entries.get(key) is entry:
-                    self._entries.pop(key, None)
-            try:
-                entry.session.close()
-            except Exception:
-                pass
-            raise RuntimeError(
-                "Antigravity session terminated and cannot be recovered"
-            )
+        if not conv_id:
+            return
 
         logger.info(
-            "recovering Antigravity session %s with conversation %s",
+            "resuming dead Antigravity session between turns for %s with conversation %s",
             key,
             conv_id,
         )
@@ -296,18 +278,3 @@ class AntigravitySessionPool:
         )
         entry.session = new_session
         entry.recovered = True
-
-        try:
-            return new_session.run_turn(request, events)
-        except Exception:
-            with self._lock:
-                if self._entries.get(key) is entry:
-                    self._entries.pop(key, None)
-            try:
-                entry.session.close()
-            except Exception:
-                pass
-            raise RuntimeError(
-                "Antigravity session recovery failed — "
-                "use /new to start a fresh session"
-            )
