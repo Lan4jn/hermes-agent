@@ -5094,32 +5094,89 @@ class TestAgentBackendFields:
         db.set_session_agent_backend("nonexistent", "antigravity", "conv-1")
 
     def test_old_db_gets_columns_on_reopen(self, tmp_path):
-        """A DB created before the columns still gains them on writable open."""
-        db_path = tmp_path / "old_state.db"
+        """A DB created with a legacy schema missing backend columns gains them on open."""
+        db_path = tmp_path / "legacy_state.db"
 
-        # Create a DB with the current schema
-        old_db = SessionDB(db_path=db_path)
-        old_db.create_session("old-session", "cli")
-        old_db.close()
-
-        # Strip the columns to simulate an old schema
+        # Create a true legacy SQLite schema without agent_backend / backend_conversation_id
         conn = sqlite3.connect(str(db_path))
-        cols = [
-            r[1]
-            for r in conn.execute("PRAGMA table_info(sessions)").fetchall()
-        ]
-        assert "agent_backend" in cols, (
-            "Column should exist after current create; "
-            "this test verifies reconciliation"
+        conn.execute("""
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                user_id TEXT,
+                session_key TEXT,
+                chat_id TEXT,
+                chat_type TEXT,
+                thread_id TEXT,
+                display_name TEXT,
+                origin_json TEXT,
+                expiry_finalized INTEGER DEFAULT 0,
+                model TEXT,
+                model_config TEXT,
+                system_prompt TEXT,
+                system_prompt_hash TEXT,
+                parent_session_id TEXT,
+                started_at REAL NOT NULL,
+                ended_at REAL,
+                end_reason TEXT,
+                message_count INTEGER DEFAULT 0,
+                tool_call_count INTEGER DEFAULT 0,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0,
+                cache_write_tokens INTEGER DEFAULT 0,
+                reasoning_tokens INTEGER DEFAULT 0,
+                cwd TEXT,
+                git_branch TEXT,
+                git_repo_root TEXT,
+                git_metadata_generation INTEGER NOT NULL DEFAULT 0,
+                billing_provider TEXT,
+                billing_base_url TEXT,
+                billing_mode TEXT,
+                estimated_cost_usd REAL,
+                actual_cost_usd REAL,
+                cost_status TEXT,
+                cost_source TEXT,
+                pricing_version TEXT,
+                title TEXT,
+                title_source TEXT,
+                last_activity_at REAL,
+                last_activity_description TEXT,
+                last_activity_provenance TEXT,
+                api_call_count INTEGER DEFAULT 0,
+                handoff_state TEXT,
+                handoff_platform TEXT,
+                handoff_session_id TEXT,
+                handoff_summary TEXT
+            )
+        """)
+        conn.execute(
+            "INSERT INTO sessions (id, source, model, started_at) VALUES (?, ?, ?, ?)",
+            ("legacy-1", "cli", "test-model", 1000.0),
         )
+        conn.commit()
+
+        cols_before = [
+            r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        ]
+        assert "agent_backend" not in cols_before
+        assert "backend_conversation_id" not in cols_before
         conn.close()
 
-        # Reopen — reconciliation should keep them
-        new_db = SessionDB(db_path=db_path)
-        row = new_db.get_session("old-session")
+        # Open with SessionDB — reconciliation must add both columns seamlessly
+        db = SessionDB(db_path=db_path)
+        row = db.get_session("legacy-1")
+        assert row is not None
+        assert row["model"] == "test-model"
         assert row["agent_backend"] == ""
         assert row["backend_conversation_id"] == ""
-        new_db.close()
+
+        # Verify mutation works on legacy row
+        db.set_session_agent_backend("legacy-1", "antigravity", "conv-99")
+        updated_row = db.get_session("legacy-1")
+        assert updated_row["agent_backend"] == "antigravity"
+        assert updated_row["backend_conversation_id"] == "conv-99"
+        db.close()
 
     def test_existing_sessions_unaffected(self, db):
         """Adding backend fields does not touch model, system_prompt, etc."""

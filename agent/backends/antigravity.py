@@ -20,8 +20,8 @@ from .base import BackendEvent, BackendEventSink, BackendTurnRequest, BackendTur
 from .config import AntigravityConfig
 
 
-_STDOUT_LINE_LIMIT = 16_384
-_STDERR_LINE_LIMIT = 4_096
+_STDOUT_LINE_LIMIT = 10_485_760
+_STDERR_LINE_LIMIT = 65_536
 _TOOL_PART_LIMIT = 1_000
 _FAILED_STATUSES = {"ERROR", "CANCELED", "INTERRUPTED", "INVALID", "WAITING", "RUNNING"}
 _TERMINAL_STATUSES = _FAILED_STATUSES | {"SUCCESS"}
@@ -159,6 +159,16 @@ class AntigravitySession:
                 self._mark_fatal()
                 self._abort_process()
                 raise
+
+    def is_alive(self) -> bool:
+        """Return True if the underlying process is currently running."""
+        with self._state_lock:
+            return (
+                not self._fatal
+                and not self._closed
+                and self._process is not None
+                and self._process.poll() is None
+            )
 
     def _ensure_process(self, deadline: float) -> subprocess.Popen[bytes]:
         with self._state_lock:

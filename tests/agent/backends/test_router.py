@@ -93,7 +93,6 @@ def test_antigravity_rejects_invalid_permission_mode(permission_mode):
     [
         "ftp://proxy.example:21",
         "http:///missing-host",
-        "http://user:password@proxy.example:8080",
         "http://proxy.example:8080?token=secret",
         "http://proxy.example:8080#fragment",
         "http://proxy.example?",
@@ -124,6 +123,16 @@ def test_antigravity_rejects_unsafe_proxy_urls(proxy_url):
         parse_antigravity_config(
             {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
         )
+
+
+def test_antigravity_accepts_proxy_with_auth_and_masks_display():
+    proxy_url = "http://user:secretpassword@proxy.example:8080"
+    parsed = parse_antigravity_config(
+        {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
+    )
+    assert parsed.proxy_url == proxy_url
+    assert parsed.proxy_display == "http://***:***@proxy.example:8080"
+    assert "secretpassword" not in parsed.proxy_display
 
 
 def test_antigravity_rejects_overlong_proxy_url():
@@ -184,7 +193,7 @@ def test_proxy_display_omits_path_that_may_contain_credentials():
     assert parsed.proxy_display == "https://proxy.example:8443"
 
 
-def test_proxy_env_secret_is_rejected_without_log_or_error_leak(
+def test_proxy_env_secret_is_parsed_and_masked_without_log_leak(
     tmp_path, monkeypatch, caplog
 ):
     secret_marker = "ANTIGRAVITY_PROXY_SECRET_7f31"
@@ -200,25 +209,25 @@ def test_proxy_env_secret_is_rejected_without_log_or_error_leak(
     monkeypatch.setenv("ANTIGRAVITY_PROXY_URL", proxy_url)
 
     loaded = load_config()
-    with pytest.raises(ValueError) as exc_info:
-        parse_antigravity_config(loaded)
+    parsed = parse_antigravity_config(loaded)
 
-    assert loaded["agent_backends"]["antigravity"]["proxy_url"] == proxy_url
-    assert "${ANTIGRAVITY_PROXY_URL}" in config_path.read_text(encoding="utf-8")
-    assert secret_marker not in str(exc_info.value)
+    assert parsed.proxy_url == proxy_url
+    assert parsed.proxy_display == "https://***:***@proxy.internal.example:8443"
+    assert secret_marker not in parsed.proxy_display
     assert secret_marker not in caplog.text
 
 
-def test_scoped_ipv6_proxy_rejects_userinfo_without_secret_leak(caplog):
+def test_scoped_ipv6_proxy_masks_userinfo_without_secret_leak(caplog):
     secret_marker = "SCOPED_PROXY_SECRET_42be"
     proxy_url = f"http://user:{secret_marker}@[fe80::1%25eth0]:8080"
 
-    with pytest.raises(ValueError) as exc_info:
-        parse_antigravity_config(
-            {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
-        )
+    parsed = parse_antigravity_config(
+        {"agent_backends": {"antigravity": {"proxy_url": proxy_url}}}
+    )
 
-    assert secret_marker not in str(exc_info.value)
+    assert parsed.proxy_url == proxy_url
+    assert parsed.proxy_display == "http://***:***@[fe80::1%25eth0]:8080"
+    assert secret_marker not in parsed.proxy_display
     assert secret_marker not in caplog.text
 
 

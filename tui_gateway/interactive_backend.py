@@ -4,25 +4,50 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from agent.backends.base import BackendEvent, BackendTurnRequest
 from agent.backends.router import BackendRouter
 
 logger = logging.getLogger(__name__)
 
-_shared_tui_router: BackendRouter | None = None
+
+def resolve_tui_config(session: dict) -> Mapping[str, Any]:
+    """Resolve active configuration Mapping for TUI session."""
+    if isinstance(session.get("config"), Mapping):
+        return session["config"]
+    try:
+        from tui_gateway.server import _load_cfg
+
+        cfg = _load_cfg()
+        if isinstance(cfg, Mapping):
+            return cfg
+    except Exception:
+        pass
+    try:
+        from hermes_cli.config import load_config
+
+        cfg = load_config()
+        if isinstance(cfg, Mapping):
+            return cfg
+    except Exception:
+        pass
+    return {}
 
 
-def get_tui_backend_router(
-    config: dict | None = None, session_db: Any = None
-) -> BackendRouter:
-    global _shared_tui_router
-    if _shared_tui_router is None:
-        _shared_tui_router = BackendRouter(
-            config=config or {}, session_db=session_db
-        )
-    return _shared_tui_router
+def get_tui_backend_router(session: dict) -> BackendRouter:
+    """Obtain or initialize the BackendRouter for a TUI session."""
+    router = session.get("_backend_router")
+    if router is not None:
+        return router
+
+    agent = session.get("agent")
+    raw_config = resolve_tui_config(session)
+    session_db = session.get("session_db") or getattr(agent, "_session_db", None)
+
+    router = BackendRouter(config=raw_config, session_db=session_db)
+    session["_backend_router"] = router
+    return router
 
 
 def run_interactive_backend_turn(
@@ -36,9 +61,8 @@ def run_interactive_backend_turn(
 ) -> dict | None:
     """Dispatches a prompt turn to Antigravity if configured; returns None for Hermes."""
     agent = session.get("agent")
-    user_config = getattr(agent, "user_config", None) or {}
-    session_db = getattr(agent, "_session_db", None)
-    router = get_tui_backend_router(user_config, session_db=session_db)
+    router = get_tui_backend_router(session)
+    session_db = session.get("session_db") or getattr(agent, "_session_db", None)
 
     platform = session.get("platform") or "tui"
     session_override = session.get("agent_backend_override")

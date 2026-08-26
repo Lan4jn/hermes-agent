@@ -946,6 +946,16 @@ def _teardown_session(session: dict | None, *, end_reason: str = "tui_close") ->
             agent.close()
     except Exception:
         pass
+    try:
+        router = session.get("_backend_router")
+        if router is not None:
+            profile = session.get("profile") or "default"
+            platform = session.get("platform") or "tui"
+            session_key = session.get("session_key") or session.get("sid") or ""
+            if session_key:
+                router.close_session(profile, platform, session_key)
+    except Exception:
+        pass
     # NOTE: the slash-worker is closed inside _finalize_session (the single
     # _finalized-guarded chokepoint that main folded it into), exactly once.
     # We deliberately do NOT re-close it here — _teardown_session's job beyond

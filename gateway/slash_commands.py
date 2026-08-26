@@ -226,6 +226,20 @@ class GatewaySlashCommandsMixin:
         except Exception:
             pass
 
+        # Close Antigravity backend session for old session_id if active
+        _router = getattr(self, "_backend_router", None)
+        if _router is not None and old_entry and getattr(old_entry, "session_id", None):
+            try:
+                _profile = getattr(self, "profile_name", "default") or "default"
+                _platform = (
+                    source.platform.value
+                    if hasattr(source.platform, "value")
+                    else str(source.platform)
+                )
+                _router.close_session(_profile, _platform, old_entry.session_id)
+            except Exception:
+                logger.debug("Failed to close antigravity session on reset", exc_info=True)
+
         try:
             from tools.env_passthrough import clear_env_passthrough
             clear_env_passthrough()

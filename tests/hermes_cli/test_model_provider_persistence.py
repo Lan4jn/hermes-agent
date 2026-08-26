@@ -589,14 +589,15 @@ class TestZaiEndpointPicker:
 
 
 class TestAntigravityModelPicker:
-    """Antigravity CLI should be present in Google group and dispatch setup."""
+    """Antigravity CLI is an agent backend, not a model provider, so it should not appear in PROVIDER_GROUPS."""
 
-    def test_google_group_includes_antigravity_cli(self):
-        from hermes_cli.models import PROVIDER_GROUPS, provider_group_for_slug
+    def test_google_group_excludes_antigravity_cli(self):
+        from hermes_cli.models import CANONICAL_PROVIDERS, PROVIDER_GROUPS, provider_group_for_slug
 
         group_label, group_desc, members = PROVIDER_GROUPS["google"]
-        assert "antigravity-cli" in members
-        assert provider_group_for_slug("antigravity-cli") == "google"
+        assert "antigravity-cli" not in members
+        assert provider_group_for_slug("antigravity-cli") == ""
+        assert "antigravity-cli" not in {p.slug for p in CANONICAL_PROVIDERS}
 
     def test_select_antigravity_flow_preserves_native_model_config(self, config_home):
         from hermes_cli.config import load_config
@@ -616,4 +617,3 @@ class TestAntigravityModelPicker:
         after = load_config()
         assert after["model"]["default"] == "gemini-2.5-flash"
         assert after["model"]["provider"] == "gemini"
-

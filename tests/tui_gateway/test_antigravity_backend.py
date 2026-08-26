@@ -1,4 +1,4 @@
-"""Tests for Antigravity backend routing in TUI gateway."""
+"""Tests for Antigravity backend routing in TUI gateway with real types."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from agent.backends.config import AntigravityConfig
 from agent.backends.pool import AntigravitySessionPool
 from agent.backends.router import BackendRouter
 from hermes_state import SessionDB
-from tui_gateway.interactive_backend import run_interactive_backend_turn
+from run_agent import AIAgent
+from tui_gateway.interactive_backend import get_tui_backend_router, run_interactive_backend_turn
 
 
 @pytest.fixture
@@ -39,8 +40,17 @@ def session_db(tmp_path):
 
 
 def test_tui_interactive_backend_returns_none_for_hermes():
+    # Use real AIAgent without synthetic user_config attribute
+    real_agent = AIAgent(
+        model="gemini-2.5-flash",
+        api_key="fake-key",
+        base_url="http://localhost:8000/v1",
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+    )
     session = {
-        "agent": MagicMock(user_config={}),
+        "agent": real_agent,
         "platform": "tui",
         "agent_backend_override": "hermes",
     }
@@ -63,19 +73,27 @@ def test_tui_interactive_backend_routes_to_antigravity(tmp_path, fake_agy_config
         pool=pool,
     )
 
-    mock_agent = MagicMock()
-    mock_agent.user_config = {"agent_backends": {"default": "hermes"}}
-    mock_agent._session_db = session_db
+    # Real AIAgent instance
+    real_agent = AIAgent(
+        model="gemini-2.5-flash",
+        api_key="fake-key",
+        base_url="http://localhost:8000/v1",
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+    )
+    real_agent._session_db = session_db
 
     session_db.create_session("gw-session-1", source="tui", model="test-model")
 
     session = {
-        "agent": mock_agent,
+        "agent": real_agent,
         "session_key": "gw-session-1",
         "platform": "tui",
         "agent_backend_override": "antigravity",
         "profile": "default",
         "history_lock": threading.Lock(),
+        "_backend_router": router,
     }
 
     emitted_events = []
@@ -87,19 +105,15 @@ def test_tui_interactive_backend_routes_to_antigravity(tmp_path, fake_agy_config
     def mock_emit(event_type, sid, payload):
         emitted_events.append((event_type, sid, payload))
 
-    with patch(
-        "tui_gateway.interactive_backend.get_tui_backend_router",
-        return_value=router,
-    ):
-        result = run_interactive_backend_turn(
-            session=session,
-            sid="ui-sid-1",
-            run_message="hello from tui",
-            stream_cb=mock_stream,
-            emit_fn=mock_emit,
-            history=[],
-            user_text="hello from tui",
-        )
+    result = run_interactive_backend_turn(
+        session=session,
+        sid="ui-sid-1",
+        run_message="hello from tui",
+        stream_cb=mock_stream,
+        emit_fn=mock_emit,
+        history=[],
+        user_text="hello from tui",
+    )
 
     assert result is not None
     assert result["completed"] is True

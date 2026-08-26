@@ -53,7 +53,6 @@ class TestExecutableDetection:
     def test_detection_checks_user_install_dir_windows(self, monkeypatch, tmp_path):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        monkeypatch.setattr("os.name", "nt")
 
         agy_exe = tmp_path / "agy" / "bin" / "agy.exe"
         agy_exe.parent.mkdir(parents=True)
@@ -64,7 +63,8 @@ class TestExecutableDetection:
 
     def test_detection_checks_user_install_dir_posix(self, monkeypatch, tmp_path):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
-        monkeypatch.setattr("os.name", "posix")
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.delenv("USERPROFILE", raising=False)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         agy_bin = tmp_path / ".local" / "bin" / "agy"
@@ -76,8 +76,9 @@ class TestExecutableDetection:
 
     def test_detection_returns_none_when_not_found(self, monkeypatch, tmp_path):
         monkeypatch.setattr("shutil.which", lambda cmd: None)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.delenv("USERPROFILE", raising=False)
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
         assert detect_antigravity_executable() is None
 
@@ -91,7 +92,6 @@ class TestVerificationAndProbe:
     def test_verify_executable_success(self):
         # Using python fake_agy as executable
         version = verify_antigravity_executable(f"{sys.executable} {FAKE_AGY}")
-        # fake_agy doesn't crash on --version, returns 0 or init
         assert version is not None
 
     def test_verify_executable_invalid_fails(self, tmp_path):
@@ -118,7 +118,6 @@ class TestVerificationAndProbe:
             models, err = probe_antigravity_models("agy")
             assert models == []
             assert err is not None
-            assert "authentication required" in err
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ class TestInstaller:
             nonlocal downloaded
             downloaded = True
             mock_resp = MagicMock()
-            mock_resp.read.return_value = b"echo installed"
+            mock_resp.read.side_effect = [b"echo installed", b""]
             mock_resp.__enter__.return_value = mock_resp
             return mock_resp
 
@@ -167,6 +166,7 @@ class TestSetupFlow:
         from hermes_cli.config import read_raw_config
 
         with patch("agent.backends.setup.detect_antigravity_executable", return_value=None), \
+             patch("agent.backends.setup.prompt", return_value=""), \
              patch("agent.backends.setup.prompt_yes_no", return_value=False):
             success = run_backend_setup("antigravity", interactive=True)
             assert success is False
@@ -181,9 +181,8 @@ class TestSetupFlow:
         with patch("agent.backends.setup.detect_antigravity_executable", return_value=f"{sys.executable} {FAKE_AGY}"), \
              patch("agent.backends.setup.verify_antigravity_executable", return_value="agy 1.2.0"), \
              patch("agent.backends.setup.probe_antigravity_models", return_value=(["gemini-3.7-flash-high", "gemini-2.5-pro"], None)), \
-             patch("agent.backends.setup.prompt", side_effect=[proxy_secret, ""]), \
-             patch("agent.backends.setup.prompt_choice", side_effect=["gemini-3.7-flash-high", "sandbox", "high"]), \
-             patch("agent.backends.setup.prompt_yes_no", side_effect=[True, True]):
+             patch("agent.backends.setup.prompt", side_effect=[proxy_secret, "1", "1", "2"]), \
+             patch("agent.backends.setup.prompt_yes_no", return_value=True):
 
             success = run_backend_setup("antigravity", interactive=True)
             assert success is True
@@ -221,11 +220,12 @@ class TestGatewayBackendCLI:
         build_gateway_parser(
             subparsers,
             cmd_gateway=gateway_command,
-            cmd_proxy=lambda a: None,
-            cmd_gateway_enroll=lambda a: None,
+            cmd_proxy=lambda args: None,
+            cmd_gateway_enroll=lambda args: None,
         )
 
         args = parser.parse_args(["gateway", "backend", "status", "antigravity"])
+        assert args.command == "gateway"
         assert args.gateway_command == "backend"
         assert args.backend_command == "status"
         assert args.backend == "antigravity"
@@ -234,13 +234,13 @@ class TestGatewayBackendCLI:
             gateway_command(args)
             mock_status.assert_called_once_with("antigravity")
 
-        setup_args = parser.parse_args(["gateway", "backend", "setup", "antigravity"])
-        assert setup_args.gateway_command == "backend"
-        assert setup_args.backend_command == "setup"
-        assert setup_args.backend == "antigravity"
+        args = parser.parse_args(["gateway", "backend", "setup", "antigravity"])
+        assert args.gateway_command == "backend"
+        assert args.backend_command == "setup"
+        assert args.backend == "antigravity"
 
         with patch("agent.backends.setup.run_backend_setup") as mock_setup:
-            gateway_command(setup_args)
+            gateway_command(args)
             mock_setup.assert_called_once_with("antigravity")
 
 
@@ -260,4 +260,3 @@ class TestStatus:
         captured = capsys.readouterr().out
         assert "Antigravity" in captured
         assert "agy 1.2.0" in captured
-

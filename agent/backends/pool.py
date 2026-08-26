@@ -70,16 +70,20 @@ class AntigravitySessionPool:
         key = (request.profile, request.platform, request.session_id)
         entry = self._acquire(key, request)
         try:
-            entry.busy = True
             try:
                 result = entry.session.run_turn(request, events)
             except (RuntimeError, OSError):
-                # Process may have died — attempt one-time recovery.
-                result = self._try_recovery(key, entry, request, events)
+                # Process may have died — attempt one-time recovery if dead
+                if not entry.session.is_alive():
+                    result = self._try_recovery(key, entry, request, events)
+                else:
+                    raise
             entry.last_used = time.monotonic()
             return result
         finally:
-            entry.busy = False
+            with self._lock:
+                entry.busy = False
+                entry.last_used = time.monotonic()
             entry.lock.release()
 
     def interrupt(self, profile: str, platform: str, session_id: str) -> bool:
@@ -166,6 +170,8 @@ class AntigravitySessionPool:
                 session = AntigravitySession(self._config, cwd)
                 entry = _PoolEntry(session)
                 self._entries[key] = entry
+            entry.busy = True
+            entry.last_used = time.monotonic()
         entry.lock.acquire()
         return entry
 
@@ -228,4 +234,4 @@ class AntigravitySessionPool:
             raise RuntimeError(
                 "Antigravity session recovery failed — "
                 "use /new to start a fresh session"
-            ) from None
+            )

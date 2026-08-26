@@ -3628,8 +3628,25 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Antigravity backend turns on /message require explicit API key / bearer auth
         from agent.backends.config import resolve_backend
-        _cfg = getattr(self, "config", None) or {}
-        _backend_sel = resolve_backend(_cfg, platform="api_server")
+        from agent.backends.router import BackendRouter
+
+        _cfg = getattr(self, "config", None)
+        _raw_cfg: dict = {}
+        if isinstance(_cfg, dict):
+            _raw_cfg = _cfg
+        elif hasattr(_cfg, "extra") and isinstance(getattr(_cfg, "extra"), dict):
+            _raw_cfg = {"platforms": {"api_server": {"extra": _cfg.extra}}}
+        elif hasattr(self, "_raw_config") and isinstance(getattr(self, "_raw_config"), dict):
+            _raw_cfg = self._raw_config
+        else:
+            try:
+                from gateway.run import _load_gateway_config
+
+                _raw_cfg = _load_gateway_config(getattr(self, "_config_path", None)) or {}
+            except Exception:
+                _raw_cfg = {}
+
+        _backend_sel = resolve_backend(_raw_cfg, platform="api_server")
         if _backend_sel.name == "antigravity" and not command_authorized:
             return web.json_response(
                 {"error": "Unauthorized: API key required for Antigravity backend turns on /message"},
@@ -3638,14 +3655,42 @@ class APIServerAdapter(BasePlatformAdapter):
 
         if message:
             try:
-                result, _usage = await self._run_agent(
-                    user_message=message,
-                    conversation_history=[],
-                    session_id=session_id,
-                    gateway_session_key=self._message_api_session_key(session_id),
-                    user_id=self._message_api_user_marker(sender_id),
-                    user_name=sender_name or None,
-                )
+                if _backend_sel.name == "antigravity":
+                    from agent.backends.base import BackendTurnRequest
+
+                    _db = getattr(getattr(self, "_session_db", None), "_db", getattr(self, "_session_db", None))
+                    _router = getattr(self, "_backend_router", None)
+                    if _router is None:
+                        _router = BackendRouter(config=_raw_cfg, session_db=_db)
+                        self._backend_router = _router
+
+                    _is_trusted = (_router.config.permission_mode == "trusted")
+                    _req = BackendTurnRequest(
+                        session_id=session_id,
+                        profile=getattr(self, "profile_name", "default") or "default",
+                        platform="api_server",
+                        principal_id=sender_id,
+                        text=message,
+                        cwd=os.getcwd(),
+                        trusted=_is_trusted,
+                    )
+                    _turn_res = await asyncio.get_running_loop().run_in_executor(
+                        None, _router.run_turn, _req, lambda ev: None
+                    )
+                    result = {
+                        "final_response": _turn_res.response,
+                        "session_id": session_id,
+                    }
+                    _usage = _turn_res.usage
+                else:
+                    result, _usage = await self._run_agent(
+                        user_message=message,
+                        conversation_history=[],
+                        session_id=session_id,
+                        gateway_session_key=self._message_api_session_key(session_id),
+                        user_id=self._message_api_user_marker(sender_id),
+                        user_name=sender_name or None,
+                    )
             except Exception as exc:
                 response_payload["error"] = str(exc)
                 return web.json_response(response_payload, status=500)

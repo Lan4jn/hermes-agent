@@ -14610,6 +14610,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     cleanup_all_browsers()
                 except Exception as _e:
                     logger.debug("cleanup_all_browsers (%s) error: %s", phase, _e)
+                try:
+                    _router = getattr(self, "_backend_router", None)
+                    if _router is not None:
+                        _router.shutdown()
+                except Exception as _e:
+                    logger.debug("backend_router.shutdown (%s) error: %s", phase, _e)
                 return _marked_cron_jobs
 
             # Thread-based shutdown watchdog (#66892): asyncio timeouts cannot
@@ -17503,6 +17509,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         if canonical == "approvals":
             return await self._handle_approvals_command(event)
+
+        if canonical == "backend":
+            return await self._handle_backend_command(event)
 
         if canonical == "model":
             return await self._handle_model_command(event)

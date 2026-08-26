@@ -2,35 +2,72 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
-from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Mapping, Optional
 
 from agent.backends.base import BackendEvent, BackendTurnRequest, BackendTurnResult
 from agent.backends.router import BackendRouter
+from gateway.platforms.base import validate_media_delivery_path
 
 logger = logging.getLogger(__name__)
 
 
-def validate_safe_media_path(path_str: str) -> Optional[str]:
-    """Validate that a media path is safe to pass to Antigravity.
+def resolve_runner_raw_config(runner: Any) -> Mapping[str, Any]:
+    """Resolve a profile-aware dictionary/Mapping from GatewayRunner."""
+    if runner is None:
+        return {}
 
-    Rejects path traversal, denied sensitive files, and non-existent files.
-    """
-    if not path_str or not isinstance(path_str, str):
-        return None
-    try:
-        p = Path(path_str).resolve()
-        if not p.is_file():
-            return None
-        # Deny sensitive files / patterns
-        lower = str(p).lower()
-        if any(secret in lower for secret in (".env", "id_rsa", "id_ed25519", "credentials", "config.json")):
-            return None
-        return str(p)
-    except Exception:
-        return None
+    # Check direct dictionary attributes
+    if isinstance(getattr(runner, "config", None), Mapping):
+        return runner.config
+
+    if isinstance(getattr(runner, "raw_config", None), Mapping):
+        return runner.raw_config
+
+    if isinstance(getattr(runner, "user_config", None), Mapping):
+        return runner.user_config
+
+    # Load from config path
+    config_path = getattr(runner, "_config_path", None)
+    if config_path:
+        try:
+            from gateway.run import _load_gateway_config
+
+            loaded = _load_gateway_config(config_path)
+            if isinstance(loaded, Mapping):
+                return loaded
+        except Exception:
+            logger.debug("Failed to load gateway config from %s", config_path, exc_info=True)
+
+    # Convert GatewayConfig dataclass if present
+    cfg_obj = getattr(runner, "config", None)
+    if cfg_obj is not None and dataclasses.is_dataclass(cfg_obj):
+        try:
+            return dataclasses.asdict(cfg_obj)
+        except Exception:
+            pass
+
+    return {}
+
+
+def get_gateway_backend_router(runner: Any) -> BackendRouter:
+    """Obtain or initialize the persistent BackendRouter for a GatewayRunner."""
+    router = getattr(runner, "_backend_router", None)
+    if router is not None:
+        return router
+
+    raw_config = resolve_runner_raw_config(runner)
+    session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
+
+    router = BackendRouter(config=raw_config, session_db=session_db)
+    if runner is not None:
+        try:
+            runner._backend_router = router
+        except Exception:
+            pass
+    return router
 
 
 def run_gateway_interactive_turn(
@@ -47,11 +84,8 @@ def run_gateway_interactive_turn(
         else str(ctx.source.platform)
     )
 
-    session_db = getattr(runner._session_db, "_db", runner._session_db)
-    router = BackendRouter(
-        config=getattr(runner, "config", None) or {},
-        session_db=session_db,
-    )
+    router = get_gateway_backend_router(runner)
+    session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
 
     # Check for session-level override in session_db
     session_override = None
@@ -70,11 +104,11 @@ def run_gateway_interactive_turn(
     if selection.name == "hermes":
         return None
 
-    # Filter safe media paths
+    # Filter safe media paths using Hermes canonical validator
     safe_media: list[str] = []
     if media_paths:
         for raw_path in media_paths:
-            safe = validate_safe_media_path(raw_path)
+            safe = validate_media_delivery_path(raw_path)
             if safe:
                 safe_media.append(safe)
 
@@ -109,7 +143,10 @@ def run_gateway_interactive_turn(
         req, _events_sink, session_override=session_override
     )
 
-    user_entry = {"role": "user", "content": ctx.message if hasattr(ctx, "message") else prompt_text}
+    user_entry = {
+        "role": "user",
+        "content": ctx.message if hasattr(ctx, "message") else prompt_text,
+    }
     asst_entry = {"role": "assistant", "content": turn_res.response}
     updated_messages = [user_entry, asst_entry]
 

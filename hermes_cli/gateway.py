@@ -8297,4 +8297,3 @@ def _gateway_command_inner(args):
             run_backend_status(backend_name)
         else:
             print("Usage: hermes gateway backend [setup|status] <backend_name>")
-

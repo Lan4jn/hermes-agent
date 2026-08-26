@@ -114,8 +114,6 @@ def _validate_proxy_url(value: Any) -> tuple[str, str]:
         raise ValueError(f"{_PROXY_KEY}: scheme must be http or https")
     if not hostname:
         raise ValueError(f"{_PROXY_KEY}: URL must include a host")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError(f"{_PROXY_KEY}: credentials are not allowed")
     if "%" in hostname:
         if not _valid_scoped_ipv6_host(hostname, parsed.netloc):
             raise ValueError(f"{_PROXY_KEY}: invalid scoped IPv6 host")
@@ -123,12 +121,22 @@ def _validate_proxy_url(value: Any) -> tuple[str, str]:
         raise ValueError(f"{_PROXY_KEY}: percent escapes are not allowed in host")
     elif not _valid_proxy_host(hostname):
         raise ValueError(f"{_PROXY_KEY}: host contains invalid characters")
-    return value, f"{scheme}://{parsed.netloc}"
+
+    if parsed.username is not None or parsed.password is not None:
+        host_repr = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+        port_suffix = f":{parsed.port}" if parsed.port is not None else ""
+        display_url = f"{scheme}://***:***@{host_repr}{port_suffix}"
+    else:
+        display_url = f"{scheme}://{parsed.netloc}"
+
+    return value, display_url
 
 
 def _valid_scoped_ipv6_host(hostname: str, netloc: str) -> bool:
     address, separator, zone = hostname.partition("%25")
-    if not netloc.startswith("[") or not separator or not zone or "%" in zone:
+    if not separator or not zone or "%" in zone:
+        return False
+    if f"[{hostname}]" not in netloc and f"[{address}%25{zone}]" not in netloc:
         return False
     if not all(char.isascii() and (char.isalnum() or char in "._~-") for char in zone):
         return False
