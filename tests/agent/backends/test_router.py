@@ -258,6 +258,7 @@ def test_backend_contracts_are_immutable_and_contain_only_transport_facts():
         "cwd",
         "media_paths",
         "trusted",
+        "conversation_id",
     }
     assert {field.name for field in fields(result)} == {
         "response",
