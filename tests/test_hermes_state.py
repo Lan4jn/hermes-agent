@@ -5188,4 +5188,3 @@ class TestAgentBackendFields:
         assert row["model"] == "gemini-3.7-flash"
         assert row["source"] == "telegram"
         assert row["agent_backend"] == "antigravity"
-
