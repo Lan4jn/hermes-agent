@@ -26,7 +26,7 @@ def fake_agy_config():
     )
     return AntigravityConfig(
         enabled=True,
-        command=f"{sys.executable} {fake_script}",
+        command=f'"{sys.executable}" "{fake_script}"',
         model="gemini-3.7-flash-high",
         effort="high",
         permission_mode="strict",
@@ -97,3 +97,54 @@ async def test_message_api_dispatches_to_antigravity_when_authorized(tmp_path, f
     assert row["agent_backend"] == "antigravity"
 
     pool.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_message_api_multi_profile_routers_are_isolated(tmp_path, fake_agy_config):
+    """Different profile requests on /message use isolated BackendRouter instances."""
+    db_path = tmp_path / "api_sessions.db"
+    session_db = SessionDB(db_path)
+
+    server = APIServerAdapter.__new__(APIServerAdapter)
+    server._message_api_enabled = True
+    server._message_api_keys = ["secret-key-123"]
+    server._message_token_store = MagicMock()
+    server._message_token_store.validate = AsyncMock(return_value=False)
+    server._has_valid_bearer_auth = lambda req: True
+    server._message_api_session_id_from_request = lambda body: body.get("session_id", "msg-sess-1")
+    server._message_api_session_key = lambda sid: f"msg:{sid}"
+    server._message_api_user_marker = lambda uid: f"user:{uid}"
+    server._session_db = session_db
+    server._raw_config = {
+        "agent_backends": {
+            "antigravity": {
+                "command": fake_agy_config.command,
+                "model": fake_agy_config.model,
+            }
+        },
+        "platforms": {"api_server": {"extra": {"agent_backend": "antigravity"}}},
+    }
+    server._backend_routers = {}
+
+    # Turn 1 with profile 'work'
+    server.profile_name = "work"
+    mock_request1 = MagicMock()
+    mock_request1.json = AsyncMock(return_value={"message": "turn work", "sender_id": "p1", "session_id": "sess-work"})
+    mock_request1.headers = {"Authorization": "Bearer secret-key-123"}
+    res1 = await server._handle_message_api(mock_request1)
+    assert res1.status == 200
+
+    # Turn 2 with profile 'personal'
+    server.profile_name = "personal"
+    mock_request2 = MagicMock()
+    mock_request2.json = AsyncMock(return_value={"message": "turn personal", "sender_id": "p2", "session_id": "sess-personal"})
+    mock_request2.headers = {"Authorization": "Bearer secret-key-123"}
+    res2 = await server._handle_message_api(mock_request2)
+    assert res2.status == 200
+
+    assert "work" in server._backend_routers
+    assert "personal" in server._backend_routers
+    assert server._backend_routers["work"] is not server._backend_routers["personal"]
+
+    for r in server._backend_routers.values():
+        r.shutdown()

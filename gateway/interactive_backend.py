@@ -14,20 +14,23 @@ from gateway.platforms.base import validate_media_delivery_path
 logger = logging.getLogger(__name__)
 
 
-def resolve_runner_raw_config(runner: Any) -> Mapping[str, Any]:
-    """Resolve a profile-aware dictionary/Mapping from GatewayRunner."""
+def resolve_runner_raw_config(runner: Any, ctx: Any = None) -> Mapping[str, Any]:
+    """Resolve a profile-aware dictionary/Mapping from TurnContext or GatewayRunner."""
+    if ctx is not None and isinstance(getattr(ctx, "user_config", None), Mapping):
+        return ctx.user_config
+
     if runner is None:
         return {}
 
     # Check direct dictionary attributes
-    if isinstance(getattr(runner, "config", None), Mapping):
-        return runner.config
+    if isinstance(getattr(runner, "user_config", None), Mapping):
+        return runner.user_config
 
     if isinstance(getattr(runner, "raw_config", None), Mapping):
         return runner.raw_config
 
-    if isinstance(getattr(runner, "user_config", None), Mapping):
-        return runner.user_config
+    if isinstance(getattr(runner, "config", None), Mapping):
+        return runner.config
 
     # Load from config path
     config_path = getattr(runner, "_config_path", None)
@@ -41,32 +44,40 @@ def resolve_runner_raw_config(runner: Any) -> Mapping[str, Any]:
         except Exception:
             logger.debug("Failed to load gateway config from %s", config_path, exc_info=True)
 
-    # Convert GatewayConfig dataclass if present
-    cfg_obj = getattr(runner, "config", None)
-    if cfg_obj is not None and dataclasses.is_dataclass(cfg_obj):
-        try:
-            return dataclasses.asdict(cfg_obj)
-        except Exception:
-            pass
-
     return {}
 
 
-def get_gateway_backend_router(runner: Any) -> BackendRouter:
-    """Obtain or initialize the persistent BackendRouter for a GatewayRunner."""
-    router = getattr(runner, "_backend_router", None)
-    if router is not None:
-        return router
+def get_gateway_backend_router(
+    runner: Any, profile: str = "default", raw_config: Mapping[str, Any] = None
+) -> BackendRouter:
+    """Obtain or initialize the persistent BackendRouter for a GatewayRunner and profile."""
+    if runner is None:
+        return BackendRouter(config=raw_config or {})
 
-    raw_config = resolve_runner_raw_config(runner)
-    session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
-
-    router = BackendRouter(config=raw_config, session_db=session_db)
-    if runner is not None:
+    routers = getattr(runner, "_backend_routers", None)
+    if routers is None:
+        routers = {}
+        single_router = getattr(runner, "_backend_router", None)
+        if single_router is not None:
+            routers[profile] = single_router
         try:
-            runner._backend_router = router
+            runner._backend_routers = routers
         except Exception:
             pass
+
+    if profile in routers:
+        return routers[profile]
+
+    if raw_config is None:
+        raw_config = resolve_runner_raw_config(runner)
+
+    session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
+    router = BackendRouter(config=raw_config, session_db=session_db)
+    routers[profile] = router
+    try:
+        runner._backend_router = router
+    except Exception:
+        pass
     return router
 
 
@@ -84,7 +95,9 @@ def run_gateway_interactive_turn(
         else str(ctx.source.platform)
     )
 
-    router = get_gateway_backend_router(runner)
+    profile = getattr(runner, "profile_name", "default") or "default"
+    raw_cfg = resolve_runner_raw_config(runner, ctx=ctx)
+    router = get_gateway_backend_router(runner, profile=profile, raw_config=raw_cfg)
     session_db = getattr(getattr(runner, "_session_db", None), "_db", getattr(runner, "_session_db", None))
 
     # Check for session-level override in session_db

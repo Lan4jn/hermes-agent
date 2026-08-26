@@ -28,7 +28,7 @@ def fake_agy_config():
     )
     return AntigravityConfig(
         enabled=True,
-        command=f"{sys.executable} {fake_script}",
+        command=f'"{sys.executable}" "{fake_script}"',
         model="gemini-3.7-flash-high",
         effort="high",
         permission_mode="strict",

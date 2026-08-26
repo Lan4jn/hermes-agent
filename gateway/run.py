@@ -14611,9 +14611,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 except Exception as _e:
                     logger.debug("cleanup_all_browsers (%s) error: %s", phase, _e)
                 try:
-                    _router = getattr(self, "_backend_router", None)
-                    if _router is not None:
-                        _router.shutdown()
+                    if hasattr(self, "_backend_routers") and isinstance(self._backend_routers, dict):
+                        for _r in list(self._backend_routers.values()):
+                            try:
+                                _r.shutdown()
+                            except Exception:
+                                pass
+                    elif hasattr(self, "_backend_router") and self._backend_router is not None:
+                        self._backend_router.shutdown()
                 except Exception as _e:
                     logger.debug("backend_router.shutdown (%s) error: %s", phase, _e)
                 return _marked_cron_jobs

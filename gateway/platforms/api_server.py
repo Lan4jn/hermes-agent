@@ -3630,23 +3630,43 @@ class APIServerAdapter(BasePlatformAdapter):
         from agent.backends.config import resolve_backend
         from agent.backends.router import BackendRouter
 
-        _cfg = getattr(self, "config", None)
-        _raw_cfg: dict = {}
-        if isinstance(_cfg, dict):
-            _raw_cfg = _cfg
-        elif hasattr(_cfg, "extra") and isinstance(getattr(_cfg, "extra"), dict):
-            _raw_cfg = {"platforms": {"api_server": {"extra": _cfg.extra}}}
-        elif hasattr(self, "_raw_config") and isinstance(getattr(self, "_raw_config"), dict):
-            _raw_cfg = self._raw_config
-        else:
-            try:
-                from gateway.run import _load_gateway_config
+        _req_profile = getattr(self, "profile_name", "default") or "default"
+        if not hasattr(self, "_backend_routers") or self._backend_routers is None:
+            self._backend_routers = {}
+            _single_router = getattr(self, "_backend_router", None)
+            if _single_router is not None:
+                self._backend_routers[_req_profile] = _single_router
 
-                _raw_cfg = _load_gateway_config(getattr(self, "_config_path", None)) or {}
-            except Exception:
-                _raw_cfg = {}
+        _router = self._backend_routers.get(_req_profile)
+        if _router is None:
+            _cfg = getattr(self, "config", None)
+            _raw_cfg: dict = {}
+            if isinstance(_cfg, dict):
+                _raw_cfg = _cfg
+            elif hasattr(_cfg, "extra") and isinstance(getattr(_cfg, "extra"), dict):
+                _raw_cfg = {"platforms": {"api_server": {"extra": _cfg.extra}}}
+            elif hasattr(self, "_raw_config") and isinstance(getattr(self, "_raw_config"), dict):
+                _raw_cfg = self._raw_config
+            else:
+                try:
+                    from hermes_cli.profiles import get_profile_dir
+                    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+                    from hermes_cli.config import load_config_readonly
 
-        _backend_sel = resolve_backend(_raw_cfg, platform="api_server")
+                    _p_dir = get_profile_dir(_req_profile)
+                    _tok = set_hermes_home_override(_p_dir)
+                    try:
+                        _raw_cfg = load_config_readonly() or {}
+                    finally:
+                        reset_hermes_home_override(_tok)
+                except Exception:
+                    _raw_cfg = {}
+            _db = getattr(getattr(self, "_session_db", None), "_db", getattr(self, "_session_db", None))
+            _router = BackendRouter(config=_raw_cfg, session_db=_db)
+            self._backend_routers[_req_profile] = _router
+        self._backend_router = _router
+
+        _backend_sel = _router.resolve(platform="api_server")
         if _backend_sel.name == "antigravity" and not command_authorized:
             return web.json_response(
                 {"error": "Unauthorized: API key required for Antigravity backend turns on /message"},
@@ -3658,16 +3678,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 if _backend_sel.name == "antigravity":
                     from agent.backends.base import BackendTurnRequest
 
-                    _db = getattr(getattr(self, "_session_db", None), "_db", getattr(self, "_session_db", None))
-                    _router = getattr(self, "_backend_router", None)
-                    if _router is None:
-                        _router = BackendRouter(config=_raw_cfg, session_db=_db)
-                        self._backend_router = _router
-
                     _is_trusted = (_router.config.permission_mode == "trusted")
                     _req = BackendTurnRequest(
                         session_id=session_id,
-                        profile=getattr(self, "profile_name", "default") or "default",
+                        profile=_req_profile,
                         platform="api_server",
                         principal_id=sender_id,
                         text=message,
@@ -3698,7 +3712,7 @@ class APIServerAdapter(BasePlatformAdapter):
             reply = result.get("final_response") or result.get("error") or ""
             response_payload["reply"] = reply
             response_payload["session_id"] = result.get("session_id", session_id)
-            if self._message_api_shared_memory_notes_enabled and reply:
+            if getattr(self, "_message_api_shared_memory_notes_enabled", False) and reply:
                 self._record_shared_message_note(
                     session_id=response_payload["session_id"],
                     sender_id=sender_id,
