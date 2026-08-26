@@ -263,3 +263,70 @@ def test_gateway_turn_derives_profile_from_context_dynamically(tmp_path, fake_ag
 
     pool1.shutdown()
     pool2.shutdown()
+
+
+def test_gateway_media_and_sessiondb_invariants(tmp_path, fake_agy_config, session_db):
+    pool = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    session_db.create_session("gw-media-1", source="telegram", model="test-model")
+
+    runner = SimpleNamespace(
+        config=GatewayConfig(),
+        raw_config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+        _session_db=session_db,
+        profile_name="default",
+        _backend_router=BackendRouter(
+            config={"platforms": {"telegram": {"extra": {"agent_backend": "antigravity"}}}},
+            session_db=session_db,
+            pool=pool,
+        ),
+    )
+
+    # Create a real safe temp media file
+    safe_file = tmp_path / "valid_image.png"
+    safe_file.write_bytes(b"PNGDATA")
+
+    # Turn 1: with one valid file and one traversal path
+    ctx1 = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-media-1",
+        message="look at this",
+        profile="default",
+    )
+    res1 = run_gateway_interactive_turn(
+        runner=runner,
+        ctx=ctx1,
+        api_run_message="look at this",
+        media_paths=[str(safe_file), "../traversal.txt"],
+    )
+    assert res1["completed"] is True
+    # Safe file must be in prompt / response; traversal path MUST NOT be in response
+    assert str(safe_file) in res1["final_response"]
+    assert "traversal.txt" not in res1["final_response"]
+
+    # Turn 2: second turn
+    ctx2 = SimpleNamespace(
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="123", user_id="u1"),
+        session_id="gw-media-1",
+        message="second question",
+        profile="default",
+    )
+    res2 = run_gateway_interactive_turn(
+        runner=runner,
+        ctx=ctx2,
+        api_run_message="second question",
+    )
+    assert res2["completed"] is True
+
+    # Assert SessionDB message count invariant: exactly 2 user rows and 2 assistant rows
+    messages = session_db.get_messages("gw-media-1")
+    assert len(messages) == 4
+    assert [m["role"] for m in messages] == ["user", "assistant", "user", "assistant"]
+    assert messages[0]["content"] == "look at this"
+    assert messages[2]["content"] == "second question"
+
+    # Assert SessionDB backend metadata
+    row = session_db.get_session("gw-media-1")
+    assert row["agent_backend"] == "antigravity"
+    assert row["backend_conversation_id"] == "fake-conversation-1"
+
+    pool.shutdown()

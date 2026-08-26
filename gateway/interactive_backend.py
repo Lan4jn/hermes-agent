@@ -161,17 +161,20 @@ def run_gateway_interactive_turn(
         req, _events_sink, session_override=session_override
     )
 
+    user_content = ctx.message if hasattr(ctx, "message") and ctx.message else prompt_text
+    asst_content = turn_res.response
+
     user_entry = {
         "role": "user",
-        "content": ctx.message if hasattr(ctx, "message") else prompt_text,
+        "content": user_content,
     }
-    asst_entry = {"role": "assistant", "content": turn_res.response}
+    asst_entry = {"role": "assistant", "content": asst_content}
     updated_messages = [user_entry, asst_entry]
 
     if session_db is not None and ctx.session_id:
         try:
-            session_db.append_message(ctx.session_id, user_entry)
-            session_db.append_message(ctx.session_id, asst_entry)
+            session_db.append_message(ctx.session_id, role="user", content=user_content)
+            session_db.append_message(ctx.session_id, role="assistant", content=asst_content)
             session_db.set_session_agent_backend(
                 ctx.session_id, "antigravity", turn_res.conversation_id or ""
             )

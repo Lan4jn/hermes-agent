@@ -116,14 +116,16 @@ def run_interactive_backend_turn(
         req, _events_sink, session_override=session_override
     )
 
-    user_entry = {"role": "user", "content": user_text or prompt_text}
-    asst_entry = {"role": "assistant", "content": turn_res.response}
+    user_content = user_text or prompt_text
+    asst_content = turn_res.response
+    user_entry = {"role": "user", "content": user_content}
+    asst_entry = {"role": "assistant", "content": asst_content}
     updated_messages = list(history) + [user_entry, asst_entry]
 
     if session_db is not None and session_key:
         try:
-            session_db.append_message(session_key, user_entry)
-            session_db.append_message(session_key, asst_entry)
+            session_db.append_message(session_key, role="user", content=user_content)
+            session_db.append_message(session_key, role="assistant", content=asst_content)
             session_db.set_session_agent_backend(
                 session_key, "antigravity", turn_res.conversation_id or ""
             )

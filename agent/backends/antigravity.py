@@ -147,9 +147,15 @@ class AntigravitySession:
             deadline = time.monotonic() + self._timeout_seconds
             try:
                 process = self._ensure_process(deadline)
+                content_text = request.text
+                if request.media_paths:
+                    attachments_block = "\n\nAttached local files validated by Hermes:\n" + "\n".join(
+                        f"- {p}" for p in request.media_paths
+                    )
+                    content_text = f"{content_text}{attachments_block}"
                 payload = {
                     "event": "user",
-                    "message": {"content": request.text},
+                    "message": {"content": content_text},
                 }
                 assert process.stdin is not None
                 process.stdin.write(

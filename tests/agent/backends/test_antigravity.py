@@ -626,3 +626,24 @@ def test_turn_event_budget_exceeded_terminates_session(monkeypatch):
         assert session.alive is False
     finally:
         session.close()
+
+
+def test_media_paths_are_rendered_into_user_content(tmp_path):
+    session = AntigravitySession(config(), cwd=str(tmp_path))
+    req = BackendTurnRequest(
+        session_id="s1",
+        profile="default",
+        platform="cli",
+        principal_id="local_user",
+        text="check this photo",
+        cwd=str(tmp_path),
+        media_paths=["/tmp/safe_image1.png", "/tmp/safe_doc.pdf"],
+    )
+    try:
+        res = session.run_turn(req, lambda e: None)
+        assert "check this photo" in res.response
+        assert "Attached local files validated by Hermes:" in res.response
+        assert "- /tmp/safe_image1.png" in res.response
+        assert "- /tmp/safe_doc.pdf" in res.response
+    finally:
+        session.close()
