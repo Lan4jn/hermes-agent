@@ -22,7 +22,7 @@ def _config(**overrides):
     base = {
         "agent_backends": {
             "antigravity": {
-                "command": f"{sys.executable} {FAKE_AGY}",
+                "command": f'"{sys.executable}" "{FAKE_AGY}"',
                 "permission_mode": "sandbox",
                 "max_sessions": 4,
                 "idle_timeout_seconds": 300,
@@ -453,3 +453,38 @@ class TestPoolInfo:
             assert pool.active_count == 1
         finally:
             pool.shutdown()
+
+    def test_concurrent_leases_survives_partial_failure(self):
+        pool = AntigravitySessionPool(_config())
+        key = ("default", "cli", "s1")
+        req = _request("hello", session_id="s1")
+        entry = pool._acquire(key, req)
+        entry2 = pool._acquire(key, req)
+        assert entry is entry2
+        assert entry.leases == 2
+
+        # Release first lease with failed=True while second lease is still active
+        pool._release(key, entry, failed=True)
+        assert entry.leases == 1
+        assert entry.marked_fatal is True
+        assert pool.active_count == 1
+        assert pool._entries.get(key) is entry
+
+        # Release second lease -> entry is finally evicted and closed
+        pool._release(key, entry2, failed=False)
+        assert entry.leases == 0
+        assert pool.active_count == 0
+        assert key not in pool._entries
+
+        pool.shutdown()
+
+    def test_shutdown_cleans_and_interrupts_all(self):
+        pool = AntigravitySessionPool(_config())
+        pool.run_turn(_request("a", session_id="s1"), lambda e: None)
+        pool.run_turn(_request("b", session_id="s2"), lambda e: None)
+        assert pool.active_count == 2
+
+        pool.shutdown()
+        assert pool.active_count == 0
+        with pytest.raises(RuntimeError, match="shut down"):
+            pool.run_turn(_request("c", session_id="s3"), lambda e: None)

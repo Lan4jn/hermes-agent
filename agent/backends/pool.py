@@ -25,14 +25,19 @@ _PoolKey = tuple[str, str, str]  # (profile, platform, session_id)
 class _PoolEntry:
     """Mutable bookkeeping for one pooled session."""
 
-    __slots__ = ("session", "lock", "last_used", "busy", "recovered")
+    __slots__ = ("session", "lock", "last_used", "leases", "recovered", "marked_fatal")
 
     def __init__(self, session: AntigravitySession) -> None:
         self.session = session
         self.lock = threading.Lock()
         self.last_used = time.monotonic()
-        self.busy = False
+        self.leases = 0
         self.recovered = False
+        self.marked_fatal = False
+
+    @property
+    def busy(self) -> bool:
+        return self.leases > 0
 
 
 class AntigravitySessionPool:
@@ -43,13 +48,13 @@ class AntigravitySessionPool:
     * **Per-session lock** — concurrent turns on the *same* key are
       serialized; different keys may run in parallel.
     * **LRU idle eviction** — when ``max_sessions`` is reached, the
-      least-recently-used *idle* entry is closed.  Busy entries are never
+      least-recently-used *idle* entry is closed. Busy entries are never
       evicted; if every slot is busy the new turn is rejected.
     * **Idle timeout** — ``cleanup_idle()`` closes sessions that have been
       idle longer than ``idle_timeout_seconds``.
     * **One-time crash recovery** — if the ``agy`` process exits between
       turns, the pool creates a fresh session with
-      ``--conversation <saved_id>`` and retries once.  A second crash is
+      ``--conversation <saved_id>`` and retries once. A second crash is
       surfaced as an error.
     """
 
@@ -69,6 +74,8 @@ class AntigravitySessionPool:
     ) -> BackendTurnResult:
         key = (request.profile, request.platform, request.session_id)
         entry = self._acquire(key, request)
+        failed = False
+        entry.lock.acquire()
         try:
             try:
                 result = entry.session.run_turn(request, events)
@@ -77,14 +84,15 @@ class AntigravitySessionPool:
                 if not entry.session.is_alive():
                     result = self._try_recovery(key, entry, request, events)
                 else:
+                    failed = True
                     raise
-            entry.last_used = time.monotonic()
+            except Exception:
+                failed = True
+                raise
             return result
         finally:
-            with self._lock:
-                entry.busy = False
-                entry.last_used = time.monotonic()
             entry.lock.release()
+            self._release(key, entry, failed=failed)
 
     def interrupt(self, profile: str, platform: str, session_id: str) -> bool:
         key = (profile, platform, session_id)
@@ -111,6 +119,10 @@ class AntigravitySessionPool:
             self._entries.clear()
         for entry in entries:
             try:
+                entry.session.interrupt()
+            except Exception:
+                pass
+            try:
                 entry.session.close()
             except Exception:
                 logger.debug("error during pool shutdown", exc_info=True)
@@ -122,10 +134,10 @@ class AntigravitySessionPool:
         with self._lock:
             for key, entry in list(self._entries.items()):
                 if (
-                    not entry.busy
+                    entry.leases == 0
                     and (now - entry.last_used) >= self._config.idle_timeout_seconds
                 ):
-                    self._entries.pop(key)
+                    self._entries.pop(key, None)
                     to_close.append((key, entry))
         for key, entry in to_close:
             try:
@@ -170,17 +182,34 @@ class AntigravitySessionPool:
                 session = AntigravitySession(self._config, cwd)
                 entry = _PoolEntry(session)
                 self._entries[key] = entry
-            entry.busy = True
+            entry.leases += 1
             entry.last_used = time.monotonic()
-        entry.lock.acquire()
-        return entry
+            return entry
+
+    def _release(self, key: _PoolKey, entry: _PoolEntry, failed: bool = False) -> None:
+        session_to_close = None
+        with self._lock:
+            entry.leases = max(0, entry.leases - 1)
+            entry.last_used = time.monotonic()
+            if failed:
+                entry.marked_fatal = True
+            if entry.leases == 0 and entry.marked_fatal:
+                if self._entries.get(key) is entry:
+                    self._entries.pop(key, None)
+                session_to_close = entry.session
+
+        if session_to_close is not None:
+            try:
+                session_to_close.close()
+            except Exception:
+                pass
 
     def _evict_lru_idle_locked(self) -> None:
-        """Evict the least-recently-used idle entry.  Caller holds ``_lock``."""
+        """Evict the least-recently-used idle entry. Caller holds ``_lock``."""
         oldest_key: _PoolKey | None = None
         oldest_time = float("inf")
         for key, entry in self._entries.items():
-            if not entry.busy and entry.last_used < oldest_time:
+            if entry.leases == 0 and entry.last_used < oldest_time:
                 oldest_time = entry.last_used
                 oldest_key = key
         if oldest_key is not None:
@@ -204,7 +233,12 @@ class AntigravitySessionPool:
         if not conv_id or entry.recovered:
             # No conversation to resume or already recovered once.
             with self._lock:
-                self._entries.pop(key, None)
+                if self._entries.get(key) is entry:
+                    self._entries.pop(key, None)
+            try:
+                entry.session.close()
+            except Exception:
+                pass
             raise RuntimeError(
                 "Antigravity session terminated and cannot be recovered"
             )
@@ -230,7 +264,12 @@ class AntigravitySessionPool:
             return new_session.run_turn(request, events)
         except Exception:
             with self._lock:
-                self._entries.pop(key, None)
+                if self._entries.get(key) is entry:
+                    self._entries.pop(key, None)
+            try:
+                entry.session.close()
+            except Exception:
+                pass
             raise RuntimeError(
                 "Antigravity session recovery failed — "
                 "use /new to start a fresh session"
