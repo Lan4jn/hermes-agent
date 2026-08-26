@@ -89,6 +89,15 @@ def run_interactive_backend_turn(
     else:
         prompt_text = run_message
 
+    saved_conv_id = ""
+    if session_db and session_key:
+        try:
+            row = session_db.get_session(session_key)
+            if row and row.get("backend_conversation_id"):
+                saved_conv_id = row["backend_conversation_id"]
+        except Exception:
+            pass
+
     req = BackendTurnRequest(
         session_id=session_key,
         profile=profile,
@@ -97,6 +106,7 @@ def run_interactive_backend_turn(
         text=prompt_text,
         cwd=os.getcwd(),
         trusted=trusted,
+        conversation_id=saved_conv_id,
     )
 
     def _events_sink(ev: BackendEvent):

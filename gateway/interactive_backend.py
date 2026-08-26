@@ -138,6 +138,15 @@ def run_gateway_interactive_turn(
 
     is_trusted = router.config.permission_mode == "trusted"
 
+    saved_conv_id = ""
+    if session_db and ctx.session_id:
+        try:
+            row = session_db.get_session(ctx.session_id)
+            if row and row.get("backend_conversation_id"):
+                saved_conv_id = row["backend_conversation_id"]
+        except Exception:
+            pass
+
     req = BackendTurnRequest(
         session_id=ctx.session_id,
         profile=profile,
@@ -147,6 +156,7 @@ def run_gateway_interactive_turn(
         cwd=os.getcwd(),
         media_paths=safe_media,
         trusted=is_trusted,
+        conversation_id=saved_conv_id,
     )
 
     def _events_sink(ev: BackendEvent):
