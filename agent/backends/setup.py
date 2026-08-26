@@ -292,9 +292,9 @@ def run_antigravity_setup(interactive: bool = True, custom_config: dict | None =
     models, err = probe_antigravity_models(exe, proxy_url)
     if err or not models:
         print_warning(f"Could not retrieve model list: {err or 'no models returned'}")
-        print_info("Running `agy auth login` to authenticate with Google...")
+        print_info("Launching `agy` to authenticate with Google...")
         if interactive:
-            auth_cmd = split_command_line(exe) + ["auth", "login"]
+            auth_cmd = split_command_line(exe)
             subprocess.run(auth_cmd, env=build_setup_env(proxy_url))
             models, err = probe_antigravity_models(exe, proxy_url)
 
@@ -424,7 +424,7 @@ def show_antigravity_status() -> None:
             print_success(f"  Authenticated! Found {len(models)} model(s): {', '.join(models[:3])}...")
         else:
             print_warning(f"  Authentication check failed: {err}")
-            print_info("  Run `hermes setup --backend antigravity` or `agy auth login` to authenticate.")
+            print_info("  Run `hermes setup --backend antigravity` or launch `agy` to authenticate.")
 
 
 def run_backend_setup(backend_name: str = "antigravity", interactive: bool = True, custom_config: dict | None = None) -> bool:

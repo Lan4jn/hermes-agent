@@ -190,6 +190,33 @@ class TestInstaller:
 
 
 class TestSetupFlow:
+    def test_setup_launches_current_agy_login_flow_without_auth_subcommand(
+        self, hermes_env
+    ):
+        with patch(
+            "agent.backends.setup.detect_antigravity_executable",
+            return_value="/usr/local/bin/agy",
+        ), patch(
+            "agent.backends.setup.verify_antigravity_executable",
+            return_value="agy 1.1.21",
+        ), patch(
+            "agent.backends.setup.probe_antigravity_models",
+            side_effect=[
+                ([], "Please sign in to view available models"),
+                (["gemini-3.7-flash-medium"], None),
+            ],
+        ), patch(
+            "agent.backends.setup.subprocess.run"
+        ) as mock_run, patch(
+            "agent.backends.setup.prompt", side_effect=["", "1", "1", "1"]
+        ), patch(
+            "agent.backends.setup.prompt_yes_no", return_value=True
+        ):
+            assert run_antigravity_setup(interactive=True) is True
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == ["/usr/local/bin/agy"]
+
     def test_setup_cancellation_writes_zero_config(self, hermes_env):
         from hermes_cli.config import read_raw_config
 
