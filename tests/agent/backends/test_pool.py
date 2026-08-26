@@ -488,3 +488,38 @@ class TestPoolInfo:
         assert pool.active_count == 0
         with pytest.raises(RuntimeError, match="shut down"):
             pool.run_turn(_request("c", session_id="s3"), lambda e: None)
+
+    def test_close_failure_retains_entry_and_tracking(self):
+        pool = AntigravitySessionPool(_config())
+        key = ("default", "cli", "s1")
+        req = _request("hello", session_id="s1")
+        pool.run_turn(req, lambda e: None)
+        assert pool.active_count == 1
+
+        entry = pool._entries.get(key)
+        assert entry is not None
+
+        # Patch entry.session.close to raise
+        with patch.object(entry.session, "close", side_effect=RuntimeError("kill failed")):
+            with pytest.raises(RuntimeError, match="kill failed"):
+                pool.close_session("default", "cli", "s1")
+
+        # Entry MUST still be tracked so it is not an untracked orphan
+        assert pool.active_count == 1
+        assert pool._entries.get(key) is entry
+        pool.shutdown()
+
+    def test_non_transport_failures_do_not_trigger_recovery(self):
+        pool = AntigravitySessionPool(_config())
+        req = _request("hello", session_id="s1")
+        pool.run_turn(req, lambda e: None)
+        entry = pool._entries.get(("default", "cli", "s1"))
+        assert entry is not None
+
+        # When session is alive and raises PermissionError, recovery MUST NOT be attempted
+        with patch.object(entry.session, "run_turn", side_effect=PermissionError("denied")):
+            with patch.object(pool, "_try_recovery") as mock_rec:
+                with pytest.raises(PermissionError, match="denied"):
+                    pool.run_turn(req, lambda e: None)
+                mock_rec.assert_not_called()
+        pool.shutdown()

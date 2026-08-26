@@ -80,8 +80,10 @@ class AntigravitySessionPool:
             try:
                 result = entry.session.run_turn(request, events)
             except (RuntimeError, OSError):
-                # Process may have died — attempt one-time recovery if dead
-                if not entry.session.is_alive():
+                # Process may have died — attempt one-time recovery if fatal and dead
+                is_dead = not entry.session.is_alive()
+                is_fatal = getattr(entry.session, "is_fatal", lambda: True)()
+                if is_dead and is_fatal:
                     result = self._try_recovery(key, entry, request, events)
                 else:
                     failed = True
@@ -105,12 +107,16 @@ class AntigravitySessionPool:
     def close_session(self, profile: str, platform: str, session_id: str) -> None:
         key = (profile, platform, session_id)
         with self._lock:
-            entry = self._entries.pop(key, None)
+            entry = self._entries.get(key)
         if entry is not None:
+            entry.lock.acquire()
             try:
                 entry.session.close()
-            except Exception:
-                logger.debug("error closing session %s", key, exc_info=True)
+            finally:
+                entry.lock.release()
+            with self._lock:
+                if self._entries.get(key) is entry:
+                    self._entries.pop(key, None)
 
     def shutdown(self) -> None:
         with self._lock:
