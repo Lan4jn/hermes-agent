@@ -214,3 +214,67 @@ def test_cli_interrupt_stops_antigravity_turn(tmp_path, fake_agy_config, session
     assert ok is True
     t.join(timeout=2.0)
     pool.shutdown()
+
+
+def test_cli_turn_transcript_invariants_and_resume(tmp_path, fake_agy_config, session_db):
+    pool1 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    router1 = BackendRouter(
+        config={"agent_backends": {"default": "antigravity", "antigravity": {"enabled": True}}},
+        session_db=session_db,
+        pool=pool1,
+    )
+    session_db.create_session("cli-resume-1", source="cli", model="test-model")
+    req1 = BackendTurnRequest(
+        session_id="cli-resume-1",
+        profile="default",
+        platform="cli",
+        principal_id="local_user",
+        text="turn 1 message",
+        cwd=str(tmp_path),
+    )
+    res1 = router1.run_turn(req1, lambda ev: None)
+    assert res1.status == "SUCCESS"
+    assert res1.conversation_id == "fake-conversation-1"
+
+    # Simulate CLI restart: destroy pool1 and router1, create pool2 and router2
+    pool1.shutdown()
+
+    pool2 = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    router2 = BackendRouter(
+        config={"agent_backends": {"default": "antigravity", "antigravity": {"enabled": True}}},
+        session_db=session_db,
+        pool=pool2,
+    )
+    req2 = BackendTurnRequest(
+        session_id="cli-resume-1",
+        profile="default",
+        platform="cli",
+        principal_id="local_user",
+        text="turn 2 message",
+        cwd=str(tmp_path),
+    )
+    res2 = router2.run_turn(req2, lambda ev: None)
+    assert res2.status == "SUCCESS"
+    assert res2.conversation_id == "fake-conversation-1"
+
+    # Verify SessionDB record is updated
+    row = session_db.get_session("cli-resume-1")
+    assert row["agent_backend"] == "antigravity"
+    assert row["backend_conversation_id"] == "fake-conversation-1"
+
+    # Test /new command resets session
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.config = {"agent_backends": {"default": "antigravity", "antigravity": {"enabled": True}}}
+    cli._session_backend_override = None
+    cli._backend_router = router2
+    cli._session_db = session_db
+    cli.session_id = "cli-resume-1"
+    cli.agent = MagicMock()
+    cli.conversation_history = []
+    cli.profile_name = "default"
+
+    cli.new_session(silent=True)
+    assert cli.session_id != "cli-resume-1"
+    assert not pool2.has_entry("default", "cli", "cli-resume-1")
+
+    pool2.shutdown()
