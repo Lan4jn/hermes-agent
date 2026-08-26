@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -40,8 +41,22 @@ from hermes_cli.cli_output import (
 
 logger = logging.getLogger(__name__)
 
-OFFICIAL_INSTALLER_WINDOWS = "https://dl.google.com/antigravity/install.ps1"
-OFFICIAL_INSTALLER_POSIX = "https://dl.google.com/antigravity/install.sh"
+OFFICIAL_INSTALLER_WINDOWS = "https://antigravity.google/cli/install.ps1"
+OFFICIAL_INSTALLER_POSIX = "https://antigravity.google/cli/install.sh"
+_MODEL_SLUG = re.compile(r"^[a-z0-9][a-z0-9._/-]*$")
+
+
+def parse_antigravity_models(stdout: str) -> list[str]:
+    """Extract model slugs from `agy models` output, skipping display labels."""
+    models: list[str] = []
+    for raw in stdout.splitlines():
+        trimmed = raw.strip()
+        if not trimmed:
+            continue
+        first = trimmed.lstrip("-*• ").split(maxsplit=1)[0] if trimmed else ""
+        if first and _MODEL_SLUG.fullmatch(first) and first not in models:
+            models.append(first)
+    return models
 
 
 def build_setup_env(proxy_url: str = "") -> dict[str, str]:
@@ -148,23 +163,9 @@ def probe_antigravity_models(
             err = res.stderr.strip() or res.stdout.strip() or f"exit code {res.returncode}"
             return [], err
 
-        lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-        models: list[str] = []
-        for line in lines:
-            if line.startswith(("-", "*", "•")):
-                m = line.lstrip("-*• ").split()[0]
-                if m:
-                    models.append(m)
-            elif " " not in line and "/" in line or "gemini" in line.lower() or "claude" in line.lower():
-                models.append(line)
-
+        models = parse_antigravity_models(res.stdout)
         if not models:
-            models = [
-                "gemini-3.7-flash-high",
-                "gemini-3.7-flash-thinking",
-                "gemini-3.7-pro",
-                "claude-3-7-sonnet",
-            ]
+            return [], "no valid model slugs returned by `agy models`"
         return models, None
     except subprocess.TimeoutExpired:
         return [], "Timed out while probing models from `agy models`"
@@ -298,12 +299,9 @@ def run_antigravity_setup(interactive: bool = True, custom_config: dict | None =
             models, err = probe_antigravity_models(exe, proxy_url)
 
     if not models:
-        models = [
-            "gemini-3.7-flash-high",
-            "gemini-3.7-flash-thinking",
-            "gemini-3.7-pro",
-            "claude-3-7-sonnet",
-        ]
+        print_error(f"Failed to obtain model list from Antigravity: {err or 'no models returned'}.")
+        print_info("Setup cancelled. No configuration was changed.")
+        return False
 
     # 4. Model selection
     selected_model = models[0]

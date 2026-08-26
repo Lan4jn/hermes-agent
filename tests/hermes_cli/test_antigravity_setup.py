@@ -10,9 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent.backends.setup import (
+    OFFICIAL_INSTALLER_POSIX,
+    OFFICIAL_INSTALLER_WINDOWS,
     detect_antigravity_executable,
     install_antigravity,
+    parse_antigravity_models,
     probe_antigravity_models,
+    run_antigravity_setup,
     run_backend_setup,
     run_backend_status,
     verify_antigravity_executable,
@@ -119,6 +123,26 @@ class TestVerificationAndProbe:
             assert models == []
             assert err is not None
 
+    def test_parse_models_uses_slug_not_display_label(self):
+        stdout = "gemini-3.7-flash-high Gemini 3.7 Flash (High)\nclaude-sonnet-4-6 Claude Sonnet 4.6 (Thinking)\n"
+        assert parse_antigravity_models(stdout) == [
+            "gemini-3.7-flash-high",
+            "claude-sonnet-4-6",
+        ]
+
+    def test_empty_catalog_after_login_performs_no_write(self, hermes_env, monkeypatch):
+        config_path = hermes_env / "config.yaml"
+        env_path = hermes_env / ".env"
+        before = config_path.read_text(encoding="utf-8")
+        env_before = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        monkeypatch.setattr("agent.backends.setup.detect_antigravity_executable", lambda *_: "agy")
+        monkeypatch.setattr("agent.backends.setup.verify_antigravity_executable", lambda *_args, **_kw: "agy 1.0")
+        monkeypatch.setattr("agent.backends.setup.probe_antigravity_models", lambda *_args, **_kw: ([], "authentication required"))
+        assert run_antigravity_setup(interactive=False, custom_config={}) is False
+        assert config_path.read_text(encoding="utf-8") == before
+        if env_path.exists():
+            assert env_path.read_text(encoding="utf-8") == env_before
+
 
 # ---------------------------------------------------------------------------
 # Installer
@@ -126,6 +150,10 @@ class TestVerificationAndProbe:
 
 
 class TestInstaller:
+    def test_official_installer_urls_are_antigravity_google(self):
+        assert OFFICIAL_INSTALLER_WINDOWS == "https://antigravity.google/cli/install.ps1"
+        assert OFFICIAL_INSTALLER_POSIX == "https://antigravity.google/cli/install.sh"
+
     def test_installer_downloads_and_runs_script_array(self, tmp_path, monkeypatch):
         downloaded = False
         executed_cmd = []
