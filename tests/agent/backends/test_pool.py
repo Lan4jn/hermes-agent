@@ -504,7 +504,7 @@ class TestPoolInfo:
 
         # Patch entry.session.close to raise
         with patch.object(entry.session, "close", side_effect=RuntimeError("kill failed")):
-            with pytest.raises(RuntimeError, match="kill failed"):
+            with pytest.raises(RuntimeError):
                 pool.close_session("default", "cli", "s1")
 
         # Entry MUST still be tracked so it is not an untracked orphan
@@ -576,3 +576,49 @@ class TestPoolInfo:
             pool.run_turn(_request("ERROR_AFTER_ACCEPT"), lambda event: None)
         assert counter.read_text(encoding="utf-8").splitlines() == ["ERROR_AFTER_ACCEPT"]
         pool.shutdown()
+
+    @pytest.mark.parametrize(
+        "operation",
+        ["explicit_close", "cleanup_idle", "eviction", "fatal_release", "shutdown"],
+    )
+    def test_failed_close_retains_trackable_entry_matrix(self, operation):
+        cfg = _config(max_sessions=1, idle_timeout_seconds=1)
+        pool = AntigravitySessionPool(cfg)
+        key = ("default", "cli", "s1")
+        req = _request("hello", session_id="s1")
+        pool.run_turn(req, lambda e: None)
+        assert pool.has_entry(*key)
+        pid = pool.session_pid(*key)
+        assert pid is not None
+
+        entry = pool._entries.get(key)
+        assert entry is not None
+
+        with patch.object(entry.session, "close", side_effect=RuntimeError(f"{operation} close failed")):
+            if operation == "explicit_close":
+                with pytest.raises(RuntimeError):
+                    pool.close_session(*key)
+            elif operation == "cleanup_idle":
+                entry.last_used = time.monotonic() - 10
+                pool.cleanup_idle()
+            elif operation == "eviction":
+                with pytest.raises(RuntimeError):
+                    pool.run_turn(_request("second", session_id="s2"), lambda e: None)
+            elif operation == "fatal_release":
+                with patch.object(entry.session, "run_turn", side_effect=RuntimeError("turn fatal")):
+                    with pytest.raises(RuntimeError):
+                        pool.run_turn(req, lambda e: None)
+            elif operation == "shutdown":
+                failed = pool.shutdown()
+                assert key in failed
+
+        assert pool.has_entry(*key)
+        if operation != "shutdown":
+            assert pool.session_pid(*key) == pid
+        # Cleanup
+        try:
+            entry.session.close()
+        except Exception:
+            pass
+        with pool._lock:
+            pool._entries.clear()

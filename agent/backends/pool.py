@@ -102,35 +102,19 @@ class AntigravitySessionPool:
         with self._lock:
             entry = self._entries.get(key)
         if entry is not None:
-            entry.lock.acquire()
-            try:
-                entry.session.close()
-            finally:
-                entry.lock.release()
-            with self._lock:
-                if self._entries.get(key) is entry:
-                    self._entries.pop(key, None)
+            if not self._close_and_remove(key, entry):
+                raise RuntimeError(f"failed to close Antigravity session {key}")
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> list[_PoolKey]:
+        """Shut down the pool, terminate all child processes, and release resources."""
         with self._lock:
             self._closed = True
             entries = list(self._entries.items())
+        failed_keys: list[_PoolKey] = []
         for key, entry in entries:
-            try:
-                entry.session.interrupt()
-            except Exception:
-                pass
-            try:
-                entry.lock.acquire()
-                try:
-                    entry.session.close()
-                finally:
-                    entry.lock.release()
-                with self._lock:
-                    if self._entries.get(key) is entry:
-                        self._entries.pop(key, None)
-            except Exception:
-                logger.debug("error during pool shutdown for %s", key, exc_info=True)
+            if not self._close_and_remove(key, entry, interrupt=True):
+                failed_keys.append(key)
+        return failed_keys
 
     def cleanup_idle(self) -> None:
         """Close sessions that have been idle longer than the timeout."""
@@ -144,20 +128,16 @@ class AntigravitySessionPool:
                 ):
                     candidates.append((key, entry))
         for key, entry in candidates:
-            entry.lock.acquire()
-            try:
-                entry.session.close()
-                with self._lock:
-                    if self._entries.get(key) is entry and entry.leases == 0:
-                        self._entries.pop(key, None)
-            except Exception:
-                logger.debug("error closing idle session %s", key, exc_info=True)
-            finally:
-                entry.lock.release()
+            self._close_and_remove(key, entry)
 
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
+
+    def has_entry(self, profile: str, platform: str, session_id: str) -> bool:
+        key = (profile, platform, session_id)
+        with self._lock:
+            return key in self._entries
 
     def session_pid(self, profile: str, platform: str, session_id: str) -> int | None:
         key = (profile, platform, session_id)
@@ -175,6 +155,39 @@ class AntigravitySessionPool:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _close_and_remove(
+        self,
+        key: _PoolKey,
+        entry: _PoolEntry,
+        *,
+        interrupt: bool = False,
+    ) -> bool:
+        """Close entry session safely and remove from pool only upon verified success."""
+        if interrupt:
+            try:
+                entry.session.interrupt()
+            except Exception:
+                pass
+
+        entry.lock.acquire()
+        try:
+            entry.session.close()
+        except Exception:
+            logger.warning(
+                "failed to close Antigravity session %s; retaining in tracking",
+                key,
+                exc_info=True,
+            )
+            return False
+        finally:
+            entry.lock.release()
+
+        with self._lock:
+            if self._entries.get(key) is entry and entry.leases == 0:
+                self._entries.pop(key, None)
+                return True
+        return False
 
     def _acquire(self, key: _PoolKey, request: BackendTurnRequest) -> _PoolEntry:
         while True:
@@ -216,17 +229,10 @@ class AntigravitySessionPool:
             # Evict outside global lock
             if evict_candidate is not None:
                 cand_key, cand_entry = evict_candidate
-                cand_entry.lock.acquire()
-                try:
-                    cand_entry.session.close()
-                    with self._lock:
-                        if (
-                            self._entries.get(cand_key) is cand_entry
-                            and cand_entry.leases == 0
-                        ):
-                            self._entries.pop(cand_key, None)
-                finally:
-                    cand_entry.lock.release()
+                if not self._close_and_remove(cand_key, cand_entry):
+                    raise RuntimeError(
+                        f"failed to evict idle session {cand_key} — capacity exhausted"
+                    )
 
     def _release(self, key: _PoolKey, entry: _PoolEntry, failed: bool = False) -> None:
         should_close = False
@@ -239,17 +245,7 @@ class AntigravitySessionPool:
                 should_close = True
 
         if should_close:
-            try:
-                entry.lock.acquire()
-                try:
-                    entry.session.close()
-                finally:
-                    entry.lock.release()
-                with self._lock:
-                    if self._entries.get(key) is entry and entry.leases == 0:
-                        self._entries.pop(key, None)
-            except Exception:
-                logger.debug("error closing fatal session %s", key, exc_info=True)
+            self._close_and_remove(key, entry)
 
     def _resume_entry_before_turn(
         self,
