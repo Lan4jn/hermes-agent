@@ -3869,7 +3869,10 @@ def select_provider_and_model(args=None):
             label = f"{row['label']} ▸ ({group_desc})" if group_desc else f"{row['label']} ▸"
             key = f"group:{gid}"
             is_active = bool(active_group) and gid == active_group
-            members = row["members"]
+            members = list(row["members"])
+            if gid == "google":
+                members.append("antigravity-cli")
+                provider_labels["antigravity-cli"] = "Google Antigravity CLI (AI Pro)"
         else:
             slug = row["slug"]
             label = canonical_descs.get(slug, provider_labels.get(slug, slug))
@@ -4028,6 +4031,8 @@ def select_provider_and_model(args=None):
         "custom",
         "cancel",
         "remove-custom",
+        "antigravity",
+        "antigravity-cli",
     } and not selected_provider.startswith("custom:"):
         _clear_stale_openai_base_url()
 

@@ -617,3 +617,37 @@ class TestAntigravityModelPicker:
         after = load_config()
         assert after["model"]["default"] == "gemini-2.5-flash"
         assert after["model"]["provider"] == "gemini"
+
+    def test_provider_picker_exposes_antigravity_under_google_group_as_setup_action(self, config_home):
+        from hermes_cli.config import load_config, save_config, save_env_value, get_env_value
+        from hermes_cli.main import select_provider_and_model
+
+        # Set up starting config and .env with custom OpenAI base url
+        config = load_config()
+        config["model"] = {"default": "gemini-2.5-flash", "provider": "gemini"}
+        save_config(config)
+        save_env_value("OPENAI_BASE_URL", "https://api.example.com/v1")
+
+        prompted_choices = []
+
+        def fake_prompt_choice(choices, default=0, title=""):
+            prompted_choices.append((title, choices))
+            if "Select" in title and "Google" in title:
+                for idx, c in enumerate(choices):
+                    if "Antigravity" in c:
+                        return idx
+            else:
+                for idx, c in enumerate(choices):
+                    if "Google" in c:
+                        return idx
+            return 0
+
+        with patch("hermes_cli.main._prompt_provider_choice", side_effect=fake_prompt_choice), \
+             patch("hermes_cli.main._model_flow_antigravity") as mock_flow:
+            select_provider_and_model()
+            assert mock_flow.called
+
+        after_cfg = load_config()
+        assert after_cfg["model"]["default"] == "gemini-2.5-flash"
+        assert after_cfg["model"]["provider"] == "gemini"
+        assert get_env_value("OPENAI_BASE_URL") == "https://api.example.com/v1"
