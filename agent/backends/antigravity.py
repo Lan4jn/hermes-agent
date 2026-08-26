@@ -23,6 +23,8 @@ from .config import AntigravityConfig
 _STDOUT_LINE_LIMIT = 10_485_760
 _STDERR_LINE_LIMIT = 65_536
 _TOOL_PART_LIMIT = 1_000
+MAX_TURN_EVENTS = 2_000
+MAX_TURN_BYTES = 52_428_800
 _FAILED_STATUSES = {"ERROR", "CANCELED", "INTERRUPTED", "INVALID", "WAITING", "RUNNING"}
 _TERMINAL_STATUSES = _FAILED_STATUSES | {"SUCCESS"}
 _CHILD_ENV_ALLOWLIST = {
@@ -72,7 +74,12 @@ _OAUTH_SECRET_RE = re.compile(
 
 
 def _redact_process_text(value: str) -> str:
-    redacted = redact_sensitive_text(value, force=True, code_file=False)
+    redacted = redact_sensitive_text(
+        value,
+        force=True,
+        code_file=False,
+        redact_url_credentials=True,
+    )
     return _OAUTH_SECRET_RE.sub(r"\1***", redacted)
 
 
@@ -351,8 +358,16 @@ class AntigravitySession:
 
     def _read_turn(self, events: BackendEventSink, deadline: float) -> BackendTurnResult:
         response_parts: list[str] = []
+        turn_events_count = 0
+        turn_bytes_count = 0
         while True:
             payload = self._next_json(deadline)
+            turn_events_count += 1
+            turn_bytes_count += len(json.dumps(payload, ensure_ascii=False))
+            if turn_events_count > MAX_TURN_EVENTS:
+                raise self._error("Antigravity turn event count exceeded limit")
+            if turn_bytes_count > MAX_TURN_BYTES:
+                raise self._error("Antigravity turn byte budget exceeded limit")
             event_type = payload.get("event")
             if event_type == "step_update":
                 step = payload.get("step_update")

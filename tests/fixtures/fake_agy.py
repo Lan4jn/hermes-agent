@@ -103,6 +103,26 @@ def main() -> int:
             sys.stderr.flush()
             time.sleep(10)
             continue
+        if text == "OVERSIZED_EVENTS":
+            for index in range(20):
+                emit({
+                    "event": "step_update",
+                    "step_update": {
+                        "step_type": "agent_response",
+                        "text_delta": f"chunk {index} ",
+                        "state": "RUNNING",
+                    },
+                })
+            emit({
+                "event": "result",
+                "result": {
+                    "conversation_id": conversation_id,
+                    "status": "SUCCESS",
+                    "response": "done",
+                    "usage": {},
+                },
+            })
+            continue
         if text == "STDERR_FLOOD":
             for index in range(200):
                 sys.stderr.write(f"stderr line {index}\n")

@@ -18663,6 +18663,15 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 self._last_ctrl_c_time = now
                 print("\n⚡ Interrupting agent... (press Ctrl+C again to force exit)")
                 request_hard_interrupt(self.agent)
+                if getattr(self, "_backend_router", None) is not None:
+                    try:
+                        self._backend_router.interrupt(
+                            profile=getattr(self, "profile_name", "default") or "default",
+                            platform="cli",
+                            session_id=getattr(self, "session_id", "default") or "default",
+                        )
+                    except Exception:
+                        pass
             # If there's text or images, clear them (like bash).
             # If everything is already empty, exit.
             elif event.app.current_buffer.text or self._attached_images:

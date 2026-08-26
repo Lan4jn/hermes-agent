@@ -24,7 +24,7 @@ def fake_agy_config():
     )
     return AntigravityConfig(
         enabled=True,
-        command=f"{sys.executable} {fake_script}",
+        command=f'"{sys.executable}" "{fake_script}"',
         model="gemini-3.7-flash-high",
         effort="high",
         permission_mode="strict",
@@ -169,3 +169,48 @@ def test_new_session_resets_backend_override(tmp_path, session_db):
     cli._backend_router.close_session.assert_called_once_with(
         profile="default", platform="cli", session_id="old-session"
     )
+
+
+def test_cli_interrupt_stops_antigravity_turn(tmp_path, fake_agy_config, session_db):
+    import threading
+    import time
+
+    pool = AntigravitySessionPool(fake_agy_config, cwd=str(tmp_path))
+    router = BackendRouter(
+        config={"agent_backends": {"default": "antigravity", "antigravity": {"enabled": True}}},
+        session_db=session_db,
+        pool=pool,
+    )
+    cli = HermesCLI.__new__(HermesCLI)
+    cli.config = {"agent_backends": {"default": "antigravity", "antigravity": {"enabled": True}}}
+    cli._session_backend_override = None
+    cli._backend_router = router
+    cli._session_db = session_db
+    cli.session_id = "test-session-cli-intr"
+    cli.profile_name = "default"
+    cli.agent = MagicMock()
+    session_db.create_session("test-session-cli-intr", source="cli", model="test-model")
+
+    req = BackendTurnRequest(
+        session_id=cli.session_id,
+        profile=cli.profile_name,
+        platform="cli",
+        principal_id="local_user",
+        text="TIMEOUT",
+        cwd=str(tmp_path),
+    )
+
+    def _run_slow():
+        try:
+            cli._backend_router.run_turn(req, lambda ev: None)
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run_slow, daemon=True)
+    t.start()
+    time.sleep(0.5)
+
+    ok = cli._backend_router.interrupt(profile="default", platform="cli", session_id="test-session-cli-intr")
+    assert ok is True
+    t.join(timeout=2.0)
+    pool.shutdown()

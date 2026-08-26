@@ -603,3 +603,26 @@ def test_windows_hide_flags_passed_at_spawn(monkeypatch):
     else:
         assert seen[0]["start_new_session"] is True
         assert "creationflags" not in seen[0]
+
+
+def test_redact_url_credentials_in_process_text():
+    from agent.backends.antigravity import _redact_process_text
+    raw = "Connecting to http://alice:supersecret123@proxy.internal:8080/path"
+    redacted = _redact_process_text(raw)
+    assert "supersecret123" not in redacted
+    assert "alice" not in redacted or "***" in redacted
+
+
+def test_turn_event_budget_exceeded_terminates_session(monkeypatch):
+    from agent.backends import antigravity as module
+    monkeypatch.setattr(module, "MAX_TURN_EVENTS", 5)
+
+    session = AntigravitySession(config(), cwd=str(Path.cwd()))
+    # Simulate a stream with more than 5 events
+    try:
+        with pytest.raises(RuntimeError, match="event count exceeded limit"):
+            session.run_turn(request("OVERSIZED_EVENTS"), lambda _event: None)
+        assert session.fatal is True
+        assert session.alive is False
+    finally:
+        session.close()

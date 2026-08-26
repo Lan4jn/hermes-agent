@@ -10693,6 +10693,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         interrupted_api = self._interrupt_api_server_runs(reason)
         if interrupted_api:
             logger.debug("Interrupted %d api_server run(s) during shutdown", interrupted_api)
+        if hasattr(self, "_backend_routers") and isinstance(self._backend_routers, dict):
+            for router in list(self._backend_routers.values()):
+                try:
+                    router.shutdown()
+                except Exception:
+                    pass
 
     async def _notify_interrupted_cron_jobs(self, job_ids) -> int:
         """Tell the owner of each just-interrupted cron job that its run died.
