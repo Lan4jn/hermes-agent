@@ -1313,22 +1313,6 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         from gateway.platforms.api_server_run_idempotency import RunIdempotencyStore
         return _idempotency_capabilities(self, store_type=store_type or RunIdempotencyStore)
 
-    @staticmethod
-    def _message_api_session_key(session_id: str) -> str:
-        return f"message_api:{session_id}"
-
-    @staticmethod
-    def _message_api_user_marker(sender_id: str) -> str:
-        return f"message_api:{sender_id}" if sender_id else "message_api:peer"
-
-    @staticmethod
-    def _is_message_api_session_row(row: Dict[str, Any]) -> bool:
-        if not isinstance(row, dict):
-            return False
-        sid = str(row.get("id") or "")
-        key = str(row.get("session_key") or "")
-        return key.startswith("message_api:") or sid.startswith("peer-")
-
     def active_agent_work_count(self) -> int:
         """All live agent work: pending admissions + in-flight turns + live /v1/runs tasks
         (task-based, since ``_active_run_agents`` has a queued-before-agent gap)."""
