@@ -37,6 +37,13 @@ _PLUGIN_SECTION_FRAME_RE = re.compile(
 _GATE_WORDS = {**dict.fromkeys(("true", "always", "yes", "on"), True), **dict.fromkeys(("false", "never", "no", "off"), False)}
 
 
+def _ra():
+    """Resolve ``run_agent`` lazily so its compatibility surface remains patchable."""
+    import run_agent
+
+    return run_agent
+
+
 def _model_gate(setting: Any, model: Optional[str], default_models) -> bool:
     """Resolve a config gate: True/"true"-ish -> on, False/"false"-ish -> off,
     list -> case-insensitive model-substring match, anything else ("auto") ->
@@ -294,6 +301,33 @@ def _tool_guidance_block(agent: Any) -> Optional[str]:
         _kanban_guidance,
     ]
     return " ".join(g for g in tool_guidance if g) or None
+
+
+def _skills_prompt(agent: Any) -> str:
+    """Build the skills index only when the skills tools are available."""
+    if not any(name in agent.valid_tool_names for name in ["skills_list", "skill_view", "skill_manage"]):
+        return ""
+    import model_tools
+
+    available_toolsets = {
+        model_tools.get_toolset_for_tool(tool_name)
+        for tool_name in agent.valid_tool_names
+    } - {None, ""}
+    try:
+        from agent.coding_context import coding_compact_skill_categories
+
+        compact_categories = coding_compact_skill_categories(
+            platform=agent.platform,
+            cwd=resolve_context_cwd(),
+        )
+    except Exception:
+        compact_categories = frozenset()
+    return _pb.build_skills_system_prompt(
+        available_tools=agent.valid_tool_names,
+        available_toolsets=available_toolsets,
+        compact_categories=compact_categories or None,
+        skills_dir_override=_agent_skills_dir(agent),
+    )
 
 
     # Computer-use — goes in as its own block rather than being merged into
@@ -764,8 +798,11 @@ def _guidance_parts(agent: Any) -> List[str]:
                 ("_task_completion_guidance", TASK_COMPLETION_GUIDANCE),
                 ("_parallel_tool_call_guidance", PARALLEL_TOOL_CALL_GUIDANCE),
             ) if getattr(agent, flag, True)
-        ]
+    ]
     parts.append(_tool_guidance_block(agent))  # None/empty entries are dropped by _join_tier
+    subscription_prompt = _ra().build_nous_subscription_prompt(agent.valid_tool_names)
+    if subscription_prompt:
+        parts.append(subscription_prompt)
     if not agent.valid_tool_names:
         return parts
     # Steering only lands inside tool results, so only reachable with tools.
@@ -796,6 +833,50 @@ def _alibaba_identity_part(agent: Any) -> List[str]:
         f"When asked what model you are, always answer based on this information, "
         f"not on any model name returned by the API."
     ]
+
+
+def _node_messaging_part() -> List[str]:
+    """Describe the configured Hermes node-messaging endpoint and peers."""
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config() or {}
+        platform = (config.get("platforms") or {}).get("api_server") or {}
+        extra = platform.get("extra") or {}
+        message = platform.get("message_api") or extra.get("message_api") or {}
+        if not (platform.get("enabled") and message.get("enabled", True)):
+            return []
+        host = str(platform.get("host") or extra.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+        port = platform.get("port") or extra.get("port") or 8642
+        peer_lines = []
+        for peer in message.get("peers") or []:
+            if not isinstance(peer, dict):
+                continue
+            name = str(peer.get("name") or "").strip()
+            url = str(peer.get("url") or peer.get("message_url") or "").strip()
+            if not name or not url:
+                continue
+            description = str(peer.get("description") or "").strip()
+            peer_lines.append(f"  - {name}: {url}" + (f" ({description})" if description else ""))
+        peer_block = ""
+        if peer_lines:
+            peer_block = "- Configured Hermes peers:\n" + "\n".join(peer_lines) + "\n"
+        command_enabled = bool(message.get("allow_command_execution", False))
+        return [
+            "Hermes Node Messaging:\n"
+            f"- This Hermes instance exposes a node-messaging endpoint at POST http://{host}:{port}/message.\n"
+            "- Use it to chat with or coordinate other Hermes instances.\n"
+            f"{peer_block}"
+            "- Valid JSON fields are exactly: session_id, sender_id, sender_display_name, message, command, api_key, exec_token.\n"
+            '- To send a normal chat message, POST JSON like: {"session_id":"peer-chat","sender_id":"hermes","sender_display_name":"Hermes","message":"hello from another Hermes"}.\n'
+            "- Read the remote Hermes reply from the JSON 'reply' field and keep using the same session_id for continuity.\n"
+            "- No api_key is required for normal message-only chat. api_key/exec_token are only for command execution.\n"
+            "- If contacting another machine, use that machine's reachable host/port; 127.0.0.1 always means the current machine.\n"
+            f"- message_api.allow_command_execution is {'true' if command_enabled else 'false'} on this instance. "
+            "Do not assume remote command execution is available unless explicitly allowed by configuration."
+        ]
+    except Exception:
+        return []
 
 
 def _coding_parts(agent: Any) -> Tuple[List[str], List[str], List[str]]:
@@ -888,6 +969,7 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     if "skill_view" in (agent.valid_tool_names or set()) and "- hermes-agent:" in skills_prompt:
         stable_parts[_help_guidance_slot] = HERMES_AGENT_HELP_GUIDANCE
     stable_parts.extend(_alibaba_identity_part(agent))
+    stable_parts.extend(_node_messaging_part())
     # Coding posture: the operating brief stays in the stable prefix. The
     # environment block contains the current cwd/backend and belongs after
     # project context, not ahead of a large shared AGENTS.md block.

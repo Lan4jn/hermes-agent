@@ -105,6 +105,7 @@ from tools.interrupt import set_interrupt as _set_interrupt
 from tools.browser_tool_lifecycle import cleanup_browser
 
 from agent.memory_provider import is_trivial_prompt
+from agent.prompt_builder import build_nous_subscription_prompt
 from agent.client_lifecycle import ClientLifecycleMixin
 from agent.stream_delivery import StreamDeliveryMixin
 from agent.status_output import StatusOutputMixin
