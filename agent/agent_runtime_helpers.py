@@ -1617,91 +1617,26 @@ def _provider_supplied_client(agent, client_kwargs: dict) -> Any | None:
             "Provider profile %r failed to create a client; falling back to the standard client path",
             getattr(profile, "name", provider_name) or "?", exc_info=True,
         )
-        return client
-    if agent.provider == "google-gemini-cli" or str(client_kwargs.get("base_url", "")).startswith("cloudcode-pa://"):
-        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        return None
 
-        safe_kwargs = {
-            k: v for k, v in client_kwargs.items()
-            if k in {"api_key", "base_url", "default_headers", "project_id", "timeout"}
-        }
-        client = GeminiCloudCodeClient(**safe_kwargs)
-        _ra().logger.info(
-            "Gemini Cloud Code Assist client created (%s, shared=%s) %s",
-            reason,
-            shared,
-            agent._client_log_context(),
-        )
-        return client
-    if agent.provider == "gemini":
-        from agent.gemini_native_adapter import GeminiNativeClient, is_native_gemini_base_url
 
-        base_url = str(client_kwargs.get("base_url", "") or "")
-        if is_native_gemini_base_url(base_url, provider=agent.provider):
-            safe_kwargs = {
-                k: v for k, v in client_kwargs.items()
-                if k in {"api_key", "base_url", "default_headers", "timeout", "http_client"}
-            }
-            if "http_client" not in safe_kwargs:
-                keepalive_http = agent._build_keepalive_http_client(
-                    base_url, verify=httpx_verify,
-                )
-                if keepalive_http is not None:
-                    safe_kwargs["http_client"] = keepalive_http
-            client = GeminiNativeClient(**safe_kwargs)
-            _ra().logger.info(
-                "Gemini native client created (%s, shared=%s) %s",
-                reason,
-                shared,
-                agent._client_log_context(),
-            )
-            return client
-    # Inject TCP keepalives so the kernel detects dead provider connections
-    # instead of letting them sit silently in CLOSE-WAIT (#10324).  Without
-    # this, a peer that drops mid-stream leaves the socket in a state where
-    # epoll_wait never fires, ``httpx`` read timeout may not trigger, and
-    # the agent hangs until manually killed.  Probes after 30s idle, retry
-    # every 10s, give up after 3 → dead peer detected within ~60s.
-    #
-    # Safety against #10933: the ``client_kwargs = dict(client_kwargs)``
-    # above means this injection only lands in the local per-call copy,
-    # never back into ``agent._client_kwargs``.  Each ``_create_openai_client``
-    # invocation therefore gets its OWN fresh ``httpx.Client`` whose
-    # lifetime is tied to the OpenAI client it is passed to.  When the
-    # OpenAI client is closed (rebuild, teardown, credential rotation),
-    # the paired ``httpx.Client`` closes with it, and the next call
-    # constructs a fresh one — no stale closed transport can be reused.
-    # Tests in ``tests/run_agent/test_create_openai_client_reuse.py`` and
-    # ``tests/run_agent/test_sequential_chats_live.py`` pin this invariant.
-    if "http_client" not in client_kwargs:
-        keepalive_http = agent._build_keepalive_http_client(
-            client_kwargs.get("base_url", ""), verify=httpx_verify,
-        )
-        if keepalive_http is not None:
-            client_kwargs["http_client"] = keepalive_http
-    # Delegate all rate-limit / 5xx retry to hermes's outer conversation loop,
-    # which honors Retry-After and applies adaptive/jittered backoff. The OpenAI
-    # SDK default (max_retries=2) uses its own 1-2s backoff that ignores
-    # Retry-After and double-retries inside our loop — the same deadlock the
-    # Anthropic clients hit (#26293). This is the single chokepoint every primary
-    # OpenAI/aggregator client passes through (init, switch_model, recovery,
-    # restore, request-scoped); auxiliary_client builds its own clients and keeps
-    # SDK retries because it is NOT wrapped by the conversation loop.
-    client_kwargs.setdefault("max_retries", 0)
-    # Defense-in-depth: guarantee Copilot requests carry the integration
-    # headers regardless of which build path we came through. The primary
-    # header wiring lives in `_apply_client_headers_for_base_url`, but two
-    # rebuild paths (`primary_recovery`, `restore_primary` in this module)
-    # reconstruct the client purely from a `_primary_runtime` snapshot and do
-    # NOT re-run that wiring. If the snapshot's client_kwargs ever lacks
-    # `default_headers` (older snapshot, header-less resolver result), the
-    # client goes out WITHOUT `Copilot-Integration-Id: vscode-chat`; the
-    # Copilot server then routes it to the "copilot-language-server" integrator
-    # whose model allowlist omits enterprise-only models (claude-opus-4.8) →
-    # HTTP 400 model_not_available_for_integrator on every turn. This chokepoint
-    # is the single place every primary OpenAI client passes through, so filling
-    # missing Copilot headers here closes the whole class. We only ADD missing
-    # keys — never override headers a caller deliberately set.
+def _profile_for_base_url(base_url: str) -> Any | None:
+    """Return the registered provider profile matching a base URL prefix."""
+    try:
+        from providers import list_providers
+        candidates = list_providers()
+    except Exception:
+        return None
+    target = base_url.rstrip("/").lower()
+    for candidate in candidates or []:
+        own = str(getattr(candidate, "base_url", "") or "").rstrip("/").lower()
+        if own and (target == own or target.startswith(own + "/")):
+            return candidate
+    return None
+
+
+def _ensure_copilot_headers(client_kwargs: dict) -> None:
+    """Add required Copilot headers without overriding caller values."""
     try:
         if base_url_host_matches(str(client_kwargs.get("base_url", "")), "githubcopilot.com"):
             from hermes_cli.models import copilot_default_headers
