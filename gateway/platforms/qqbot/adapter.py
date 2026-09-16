@@ -833,15 +833,18 @@ class QQAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _create_task(coro):
-        """Schedule a coroutine, silently skipping if no event loop is running.
+        """Schedule a coroutine, safely closing it if no event loop is running.
 
         This avoids ``RuntimeError: no running event loop`` when tests call
-        ``_dispatch_payload`` synchronously outside of ``asyncio.run()``.
+        ``_dispatch_payload`` synchronously outside of ``asyncio.run()``,
+        and avoids ``RuntimeWarning: coroutine was never awaited``.
         """
         try:
             loop = asyncio.get_running_loop()
             return loop.create_task(coro)
         except RuntimeError:
+            if asyncio.iscoroutine(coro):
+                coro.close()
             return None
 
     def _dispatch_payload(self, payload: Dict[str, Any]) -> None:
@@ -1106,11 +1109,15 @@ class QQAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _parse_gateway_session_key(session_key: str) -> Optional[Dict[str, str]]:
-        """Parse ``agent:main:<platform>:<chat_type>:<chat_id>[:<user_id>]``."""
+        """Parse ``agent:<profile>:<platform>:<chat_type>:<chat_id>[:<user_id>]``."""
         parts = str(session_key or "").split(":")
-        if len(parts) < 5 or parts[0] != "agent" or parts[1] != "main":
+        if len(parts) < 5 or parts[0] != "agent":
+            return None
+        profile = parts[1]
+        if not profile:
             return None
         parsed = {
+            "profile": profile,
             "platform": parts[2],
             "chat_type": parts[3],
             "chat_id": parts[4],
@@ -1132,7 +1139,7 @@ class QQAdapter(BasePlatformAdapter):
 
         chat_type = parsed.get("chat_type", "")
         chat_id = parsed.get("chat_id", "")
-        if chat_type == "c2c":
+        if chat_type in {"c2c", "dm"}:
             return bool(chat_id) and operator == chat_id
 
         if chat_type in {"group", "guild"}:
@@ -2615,7 +2622,12 @@ class QQAdapter(BasePlatformAdapter):
                     )
                     await asyncio.sleep(delay)
 
-        error_msg = str(last_exc) if last_exc else "Unknown error"
+        if last_exc:
+            exc_str = str(last_exc).strip()
+            exc_type = type(last_exc).__name__
+            error_msg = f"{exc_type}: {exc_str}" if exc_str else exc_type
+        else:
+            error_msg = "Unknown error"
         logger.error("[%s] Send failed: %s", self._log_tag, error_msg)
         retryable = not any(
             k in error_msg.lower() for k in ("invalid", "forbidden", "not found")
@@ -2731,7 +2743,10 @@ class QQAdapter(BasePlatformAdapter):
             logger.error(
                 "[%s] send_with_keyboard failed: %s", self._log_tag, exc
             )
-            return SendResult(success=False, error=str(exc))
+            exc_str = str(exc).strip()
+            exc_type = type(exc).__name__
+            error_msg = f"{exc_type}: {exc_str}" if exc_str else exc_type
+            return SendResult(success=False, error=error_msg)
 
     async def send_approval_request(
             self,
@@ -3083,7 +3098,10 @@ class QQAdapter(BasePlatformAdapter):
             )
         except Exception as exc:
             logger.error("[%s] Media send failed: %s", self._log_tag, exc)
-            return SendResult(success=False, error=str(exc))
+            exc_str = str(exc).strip()
+            exc_type = type(exc).__name__
+            error_msg = f"{exc_type}: {exc_str}" if exc_str else exc_type
+            return SendResult(success=False, error=error_msg)
 
     async def _upload_local_file(
             self,

@@ -147,6 +147,13 @@ except Exception:  # pragma: no cover - version import should always succeed
     _HERMES_CLI_VERSION = "unknown"
 CODEX_OAUTH_USER_AGENT = f"hermes-cli/{_HERMES_CLI_VERSION}"
 CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
+from hermes_cli.auth_oauth_grants import (
+    SINGLE_USE_OAUTH_SINGLETON_FILES,
+    SINGLE_USE_REFRESH_POOL_PROVIDERS,
+    consume_oauth_heal_notices,
+    heal_forked_single_use_oauth_grants,
+    strip_cloned_single_use_oauth_grants,
+)
 XAI_OAUTH_ISSUER = "https://auth.x.ai"
 XAI_OAUTH_DISCOVERY_URL = f"{XAI_OAUTH_ISSUER}/.well-known/openid-configuration"
 XAI_OAUTH_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
@@ -1747,6 +1754,7 @@ def write_credential_pool(
     *,
     removed_ids: Optional[Iterable[str]] = None,
     replace_sources: Optional[Iterable[str]] = None,
+    status_cleared_ids: Optional[Iterable[str]] = None,
 ) -> Path:
     """Persist one provider's credential pool under auth.json.
 
@@ -1769,9 +1777,14 @@ def write_credential_pool(
     Pass ``replace_sources`` for singleton credential sources whose in-memory
     entries replace every on-disk entry for that source. Other sources retain
     the normal concurrent-add merge behavior.
+
+    Pass ``status_cleared_ids`` for entries whose cooldown/quarantine status
+    was deliberately cleared in-memory, so the merge does not resurrect stale
+    cooldown fields from disk.
     """
     removed = {rid for rid in (removed_ids or ()) if rid}
     replaced_sources = {source for source in (replace_sources or ()) if source}
+    cleared_status = {cid for cid in (status_cleared_ids or ()) if cid}
     with _auth_store_lock():
         auth_store = _load_auth_store()
         pool = auth_store.get("credential_pool")
@@ -1797,7 +1810,9 @@ def write_credential_pool(
         }
         merged: List[Dict[str, Any]] = [
             _merge_disk_cooldown_state(
-                entry, existing_by_id.get(entry.get("id")), provider_id
+                entry,
+                None if (isinstance(entry, dict) and entry.get("id") in cleared_status) else existing_by_id.get(entry.get("id")),
+                provider_id,
             )
             if isinstance(entry, dict)
             else entry
@@ -7593,10 +7608,8 @@ def _update_config_for_provider(
     # When switching to a non-OpenRouter provider, ensure model.default is
     # valid for the new provider.  An OpenRouter-formatted name like
     # "anthropic/claude-opus-4.6" will fail on direct-API providers.
-    if default_model:
-        cur_default = model_cfg.get("default", "")
-        if not cur_default or "/" in cur_default:
-            model_cfg["default"] = default_model
+    if default_model and not model_cfg.get("default"):
+        model_cfg["default"] = default_model
 
     config["model"] = model_cfg
 

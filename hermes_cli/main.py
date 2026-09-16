@@ -719,7 +719,9 @@ from hermes_cli.main_provider_setup import (
     _prompt_main_reasoning_effort,
     _prompt_provider_choice,
     _remove_custom_provider,
+    _prompt_api_key,
 )
+from hermes_cli.model_setup_flows import _model_flow_google_gemini_cli
 from hermes_cli.main_install_repair import (
     _cleanup_quarantined_exes,
     _recover_from_interrupted_install,

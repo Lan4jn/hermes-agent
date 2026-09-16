@@ -27,7 +27,8 @@ from collections import OrderedDict
 from contextvars import copy_context
 from pathlib import Path
 from datetime import datetime
-from typing import Callable, Dict, Optional, Any, List, Tuple, cast
+from typing import Awaitable, Callable, Dict, Optional, Any, List, Tuple, cast
+from gateway.session import SessionEntry
 
 from agent.async_utils import safe_schedule_threadsafe
 from agent.conversation_compression import (

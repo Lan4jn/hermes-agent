@@ -457,6 +457,9 @@ class OpenAICompatRoutesMixin:
         # X-Hermes-Session-Id continues an existing session (history from state.db, not the body);
         # requires a configured API key or any client could read history by guessing ids.
         provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+        body_sid = str(body.get("session_id") or "").strip()
+        if not provided_session_id and body_sid:
+            provided_session_id = body_sid
         if provided_session_id:
             if not self._api_key:
                 logger.warning(
@@ -481,7 +484,9 @@ class OpenAICompatRoutesMixin:
                     # on the tip is what this continuation consumes. Same canonical resolution
                     # the delivery writer (gateway/wake.py) and /v1/runs use; fails open.
                     from gateway.platforms.api_server_runs import _resolve_live_session_id
-                    session_id = await _resolve_live_session_id(self, provided_session_id)
+                    live_sid = await _resolve_live_session_id(self, provided_session_id)
+                    if isinstance(live_sid, str) and live_sid.strip():
+                        session_id = live_sid.strip()
                     history = await asyncio.to_thread(db.get_messages_as_conversation, session_id)
             except Exception as e:
                 logger.warning("Failed to load session history for %s: %s", session_id, e)
@@ -500,10 +505,12 @@ class OpenAICompatRoutesMixin:
             model_alias=model_name)
         if selection_error is not None:
             return selection_error
+        from gateway.platforms.api_server import _request_relay_metadata
+        relay_metadata = _request_relay_metadata(body)
         run_kwargs = dict(
             user_message=user_message, conversation_history=history,
             ephemeral_system_prompt=system_prompt, session_id=session_id,
-            gateway_session_key=gateway_session_key, **agent_overrides, route=route,
+            **agent_overrides, gateway_session_key=gateway_session_key, route=route,
             relay_metadata=relay_metadata,
             # #98619: only an explicitly provided X-Hermes-Session-Id is wake-capable (the
             # header is 403-gated on API_SERVER_KEY, so the wake self-post can authenticate
@@ -857,11 +864,14 @@ class OpenAICompatRoutesMixin:
             model_alias=body.get("model"))
         if selection_error is not None:
             return selection_error
+        from gateway.platforms.api_server import _request_relay_metadata
+        relay_metadata = _request_relay_metadata(body)
         run_kwargs = dict(
             user_message=user_message, conversation_history=conversation_history,
             ephemeral_system_prompt=instructions, session_id=session_id,
-            gateway_session_key=gateway_session_key, bind_declared_conversation=_declared_selected,
-            **agent_overrides, route=route, relay_metadata=relay_metadata)
+            **agent_overrides, gateway_session_key=gateway_session_key,
+            bind_declared_conversation=_declared_selected,
+            route=route, relay_metadata=relay_metadata)
         if stream:
             _stream_q = ThreadSafeAsyncQueue()
 

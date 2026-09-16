@@ -372,7 +372,9 @@ async def _resolve_live_session_id(self, session_id: str) -> str:
         return session_id
     try:
         resolved = await asyncio.to_thread(resolver, session_id)
-        return str(resolved) if resolved else session_id
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved.strip()
+        return session_id
     except Exception:
         logger.debug("/v1/runs live-session resolve failed for %s", session_id, exc_info=True)
         return session_id

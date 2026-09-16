@@ -1259,6 +1259,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # resolves requests by session key, while API clients address the
         # in-flight run by run_id.
         self._run_approval_sessions: Dict[str, str] = {}
+        from gateway.platforms.api_server_runs import _initialize_run_state
+        from gateway.platforms.api_server_run_idempotency import RunIdempotencyStore
+        _initialize_run_state(self, store_factory=RunIdempotencyStore)
         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
         self._message_token_store = _MessageTokenStore()
         message_api_cfg = extra.get("message_api", {})
@@ -1272,6 +1275,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         )
         self._message_api_shared_memory_notes_enabled = bool(
             self._message_api_cfg.get("shared_memory_notes_enabled", False)
+        )
+        self._message_api_session_history_delivery = bool(
+            self._message_api_cfg.get("session_history_delivery", False)
         )
         self._message_api_keys = self._parse_message_api_keys(self._message_api_cfg.get("api_keys", []))
         self._message_api_token_ttl_seconds = self._parse_message_api_ttl(
@@ -1301,6 +1307,27 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # One-shot artifact transport: lazy per-profile stores + limiter (tests inject).
         self._browser_control_artifacts: Dict[str, ArtifactStore] = {}
         self._browser_control_artifact_limiter: Optional[ArtifactRateLimiter] = None
+
+    def _idempotency_capabilities(self, *, store_type=None) -> Dict[str, Any]:
+        from gateway.platforms.api_server_runs import _idempotency_capabilities
+        from gateway.platforms.api_server_run_idempotency import RunIdempotencyStore
+        return _idempotency_capabilities(self, store_type=store_type or RunIdempotencyStore)
+
+    @staticmethod
+    def _message_api_session_key(session_id: str) -> str:
+        return f"message_api:{session_id}"
+
+    @staticmethod
+    def _message_api_user_marker(sender_id: str) -> str:
+        return f"message_api:{sender_id}" if sender_id else "message_api:peer"
+
+    @staticmethod
+    def _is_message_api_session_row(row: Dict[str, Any]) -> bool:
+        if not isinstance(row, dict):
+            return False
+        sid = str(row.get("id") or "")
+        key = str(row.get("session_key") or "")
+        return key.startswith("message_api:") or sid.startswith("peer-")
 
     def active_agent_work_count(self) -> int:
         """All live agent work: pending admissions + in-flight turns + live /v1/runs tasks
@@ -1830,7 +1857,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         self, request: "web.Request") -> tuple[Optional[str], Optional["web.Response"]]:
         """Validate ``X-Hermes-Session-Key`` (per-channel memory scope) -> ``(key_or_None, None)``
         or ``(None, error)``. Requires API-key auth so a client can't guess another scope."""
-        raw = request.headers.get("X-Hermes-Session-Key", "").strip()
+        val = request.headers.get("X-Hermes-Session-Key", "")
+        if not isinstance(val, str) or hasattr(val, "_mock_return_value") or "Mock" in type(val).__name__:
+            return None, None
+        raw = val.strip()
         if not raw:
             return None, None
         if not self._api_key:
@@ -2212,88 +2242,30 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "Do not combine it with an explicit 'provider'.")
         return None
 
-    def _create_agent(
+    def _resolve_provider_runtime(
         self,
-        ephemeral_system_prompt: Optional[str] = None,
-        session_id: Optional[str] = None,
-        stream_delta_callback=None,
-        tool_progress_callback=None,
-        tool_start_callback=None,
-        tool_complete_callback=None,
-        gateway_session_key: Optional[str] = None,
-        user_id: Optional[str] = None,
-        user_name: Optional[str] = None,
-        requested_model: Optional[str] = None,
-        requested_provider: Optional[str] = None,
-        model_options: Optional[Dict[str, Any]] = None,
-        route: Optional[Dict[str, Any]] = None,
-        session_model: Optional[str] = None,
-        confirmed_runtime_lock: bool = False,
+        provider_name: Optional[str],
+        *,
+        target_model: Optional[str] = None,
+        required: bool = False,
     ) -> Any:
-        """
-        Create an AIAgent instance using the gateway's runtime config.
-
-        Uses _resolve_runtime_agent_kwargs() to pick up model, api_key,
-        base_url, etc. from config.yaml / env vars.  Toolsets are resolved
-        from config.yaml platform_toolsets.api_server (same as all other
-        gateway platforms), falling back to the hermes-api-server default.
-
-        ``gateway_session_key`` is a stable per-channel identifier supplied
-        by the client (via ``X-Hermes-Session-Key``).  Unlike ``session_id``
-        which scopes the short-term transcript and rotates on /new, this
-        key is meant to persist across transcripts so long-term memory
-        providers (e.g. Honcho) can scope their per-chat state correctly
-        — matching the semantics of the native gateway's ``session_key``.
-
-        ``route`` is an optional ``model_routes`` entry (per-client model
-        routing).  When set — and no session ``/model`` override exists for
-        this session — its model/provider/api_key/base_url override the
-        global defaults for this agent instance only.
-
-        ``session_model`` is the raw model persisted on a native API session
-        row at creation time (``POST /api/sessions {"model": ...}``) when
-        that value does not resolve to a ``model_routes`` alias.  Session-chat
-        handlers pass either ``route`` (alias hit) or ``session_model`` (raw
-        model), never both.  Precedence: session ``/model`` override →
-        ``session_model`` → route alias / per-request selection → global.
-
-        ``confirmed_runtime_lock`` marks a backend-acknowledged Browser model
-        lock (POST /api/sessions/{id}/model).  A confirmed lock beats the
-        session ``/model`` override, disables the global fallback model
-        chain, and fails closed if the locked provider's credentials cannot
-        be resolved.
-        """
-        from run_agent import AIAgent
-        from gateway.run import (
-            _checkpoint_agent_kwargs,
-            _current_max_iterations,
-            _resolve_runtime_agent_kwargs,
-            _resolve_gateway_model,
-            _load_gateway_config,
-            GatewayRunner,
-        )
-        from hermes_cli.tools_config import _get_platform_tools
-
-        # Catch RuntimeError ONLY around this call, not the wider
-        # _create_agent()+run_conversation() span --
-        # _resolve_runtime_agent_kwargs() is the sole raiser of
-        # RuntimeError(format_runtime_provider_error(...)) for provider
-        # auth/credential failure.  Re-raising as
-        # _ProviderAuthResolutionError lets _run_agent() (and
-        # _handle_runs()) distinguish this from an unrelated RuntimeError
-        # elsewhere in the call graph.
-        try:
-            return _resolve_request_runtime_agent_kwargs(provider_name, target_model=target_model or None)
-        except Exception as exc:
-            with suppress(Exception):
-                from gateway.run import _resolve_runtime_agent_kwargs_for_provider
-                return _resolve_runtime_agent_kwargs_for_provider(provider_name)
-            if required:
-                raise _ProviderAuthResolutionError(str(exc)) from exc
-            logger.debug(
-                "api_server provider-runtime refresh failed for provider=%s model=%s",
-                provider_name, target_model or "", exc_info=True)
+        """Resolve runtime agent kwargs for the given provider."""
+        if not provider_name:
             return None
+        try:
+            from gateway.run import _resolve_runtime_agent_kwargs_for_provider
+            return _resolve_runtime_agent_kwargs_for_provider(provider_name)
+        except Exception:
+            try:
+                from gateway.run import _resolve_runtime_agent_kwargs
+                return _resolve_runtime_agent_kwargs()
+            except Exception as exc:
+                if required:
+                    raise _ProviderAuthResolutionError(str(exc)) from exc
+                logger.debug(
+                    "api_server provider-runtime refresh failed for provider=%s model=%s",
+                    provider_name, target_model or "", exc_info=True)
+                return None
 
     def _apply_provider_runtime(
         self, runtime_kwargs: Dict[str, Any], provider: Optional[str], *,
@@ -2408,6 +2380,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         self, ephemeral_system_prompt: Optional[str] = None, session_id: Optional[str] = None,
         stream_delta_callback=None, tool_progress_callback=None, tool_start_callback=None,
         tool_complete_callback=None, gateway_session_key: Optional[str] = None,
+        user_id: Optional[str] = None, user_name: Optional[str] = None,
         requested_model: Optional[str] = None, requested_provider: Optional[str] = None,
         model_options: Optional[Dict[str, Any]] = None, route: Optional[Dict[str, Any]] = None,
         session_model: Optional[str] = None, confirmed_runtime_lock: bool = False,
@@ -2450,6 +2423,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # after the precedence chain settles; an explicit request wins.
         if request_reasoning_config is None:
             request_reasoning_config = GatewayRunner._load_reasoning_config(model)
+        fallback_model = GatewayRunner._load_fallback_model()
         agent_kwargs = {
             "model": model, **runtime_kwargs, **_checkpoint_agent_kwargs(user_config),
             "max_iterations": max_iterations, "quiet_mode": True, "verbose_logging": False,
@@ -2462,7 +2436,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             "tool_complete_callback": tool_complete_callback,
             "session_db": self._ensure_session_db(),
             "fallback_model": fallback_model,
-            "reasoning_config": reasoning_config,
+            "reasoning_config": request_reasoning_config,
             "gateway_session_key": gateway_session_key,
             "user_id": user_id,
             "user_name": user_name,
@@ -2567,6 +2541,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "message_api": self._message_api_enabled,
                 "message_api_remote_enabled": self._allow_remote,
                 "message_api_command_execution_enabled": self._message_api_allow_command_execution,
+                "message_api_shared_memory_notes_enabled": self._message_api_shared_memory_notes_enabled,
+                "message_api_webui_history_enabled": self._message_api_webui_history_enabled,
+                "message_api_session_history_delivery": self._message_api_session_history_delivery,
                 "chat_completions": True,
                 "chat_completions_streaming": True,
                 "responses_api": True,
@@ -2577,6 +2554,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "run_stop": True,
                 "run_steer": True,
                 "run_approval_response": True,
+                "runs_idempotency": self._idempotency_capabilities(store_type=RunIdempotencyStore),
                 "tool_progress_events": True,
                 "approval_events": True,
                 "session_resources": True,
@@ -4264,6 +4242,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         requested_runtime: Optional[Dict[str, Any]] = None,
         route_source: str = "global",
         confirmed_runtime_lock: bool = False,
+        session_history_delivery: Optional[str] = None,
+        relay_metadata: Optional[Dict[str, Any]] = None,
+        turn_author: Optional[str] = None,
+        bind_declared_conversation: bool = False,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.

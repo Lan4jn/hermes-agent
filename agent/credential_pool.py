@@ -1016,13 +1016,16 @@ class CredentialPool(CredentialPoolAdminMixin):
         *,
         removed_ids: Optional[List[str]] = None,
         replace_sources: Optional[Iterable[str]] = None,
+        status_cleared_ids: Optional[Iterable[str]] = None,
     ) -> None:
         # Self-locking (RLock): snapshotting self._entries must not race a
         # concurrent rotation when called from the deferred refresh path.
         with self._lock:
-            kwargs = {"removed_ids": removed_ids}
+            kwargs: Dict[str, Any] = {"removed_ids": removed_ids}
             if replace_sources is not None:
                 kwargs["replace_sources"] = replace_sources
+            if status_cleared_ids is not None:
+                kwargs["status_cleared_ids"] = status_cleared_ids
             write_credential_pool(
                 self.provider,
                 [entry.to_dict() for entry in self._entries],

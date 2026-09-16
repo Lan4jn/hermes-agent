@@ -943,7 +943,7 @@ def _model_flow_google_gemini_cli(_config, current_model=""):
     if selected:
         _save_model_choice(selected)
         _update_config_for_provider(
-            "google-gemini-cli", code_assist_base_url
+            "google-gemini-cli", code_assist_base_url, default_model=selected
         )
         print(
             f"Default model set to: {selected} (via Google Gemini OAuth / Code Assist)"
@@ -2813,7 +2813,7 @@ def _select_zai_endpoint(current_base: str) -> str:
     Returns the selected base URL.  Falls back to *current_base* on cancel
     or error.
     """
-    from hermes_cli.main import _prompt_provider_choice
+    from hermes_cli.main_provider_setup import _prompt_provider_choice
     from hermes_cli.auth import ZAI_ENDPOINTS
 
     # Build label + URL pairs from the shared endpoint list.
@@ -2841,20 +2841,20 @@ def _select_zai_endpoint(current_base: str) -> str:
         title="Select Z.AI / GLM endpoint:",
     )
     if selected is None:
-        return current_base
+        return current_base or options[default_idx][1].rstrip("/")
 
     if selected == len(options):
         # Custom proxy URL
         try:
-            override = line_input(f"Custom base URL [{current_base}]: ").strip()
+            override = input(f"Custom base URL [{current_base}]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
-            return current_base
+            return current_base or options[default_idx][1].rstrip("/")
         if not override:
-            return current_base
+            return current_base or options[default_idx][1].rstrip("/")
         if not override.startswith(("http://", "https://")):
             print("  Invalid URL — must start with http:// or https://. Keeping current value.")
-            return current_base
+            return current_base or options[default_idx][1].rstrip("/")
         return override.rstrip("/")
 
     return options[selected][1].rstrip("/")
@@ -2862,7 +2862,7 @@ def _select_zai_endpoint(current_base: str) -> str:
 
 def _model_flow_api_key_provider(config, provider_id, current_model=""):
     """Generic flow for API-key providers (z.ai, MiniMax, OpenCode, etc.)."""
-    from hermes_cli.main import _prompt_api_key
+    from hermes_cli.main_provider_setup import _prompt_api_key
     from hermes_cli.auth import (
         PROVIDER_REGISTRY,
         _prompt_model_selection,

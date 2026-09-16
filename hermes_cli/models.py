@@ -21,7 +21,7 @@ import urllib.request
 import urllib.error
 import time
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from typing import TypeGuard
@@ -46,6 +46,8 @@ from hermes_cli.models_catalog_static import (
     _PROVIDER_MODELS,
     _PROVIDER_RETIRED_ALIASES,
     _SILENT_DEFAULT_PROVIDERS,
+    _codex_curated_models,
+    _xai_curated_models,
     _xai_finalize_catalog)
 from hermes_cli.models_reasoning_caps import (
     _OPENROUTER_CATALOG_URL,

@@ -384,6 +384,12 @@ def _ask_index(prompt: str, count: int, *, echo_cancel: bool):
 def _prompt_provider_choice(choices, *, default=0, title="Select provider:"):
     """Provider menu with curses arrow keys; numbered-list fallback when curses is unavailable
     (piped stdin, non-TTY). Returns the selected index, or None if the user cancels."""
+    import sys
+    # Non-interactive / non-TTY safety: if stdin is not a TTY (captured in tests or scripted),
+    # return the default choice directly instead of blocking or failing on stdin read.
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        return default
+
     with contextlib.suppress(Exception):
         from hermes_cli.setup import _curses_prompt_choice
         idx = _curses_prompt_choice(title, choices, default)
@@ -393,7 +399,10 @@ def _prompt_provider_choice(choices, *, default=0, title="Select provider:"):
 
     _print_numbered(title, choices, default)
     print()
-    idx = _ask_index(f"Choice [1-{len(choices)}] ({default + 1}): ", len(choices), echo_cancel=True)
+    try:
+        idx = _ask_index(f"Choice [1-{len(choices)}] ({default + 1}): ", len(choices), echo_cancel=True)
+    except Exception:
+        return default
     if idx is None:
         return default
     return None if idx is _CANCELLED else idx
