@@ -616,6 +616,54 @@ def test_custom_endpoint_explicit_custom_prefers_config_key(monkeypatch):
     assert resolved["api_key"] == "sk-vllm-key"
 
 
+def test_bare_custom_config_route_preempts_auto_detected_provider(monkeypatch):
+    """A configured custom route must not be replaced by an unrelated credential pool."""
+    config = {
+        "model": {
+            "provider": "custom",
+            "default": "gemini-3.8-flash-high",
+            "base_url": "http://custom-gateway.example:8045/v1",
+            "api_key": "sk-custom-gateway",
+            "api_mode": "codex_responses",
+        },
+        "custom_providers": [
+            {
+                "name": "Custom Gateway",
+                "base_url": "http://custom-gateway.example:8045/v1",
+                "api_key": "sk-custom-gateway",
+                "model": "gemini-3.8-flash-high",
+                "api_mode": "codex_responses",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: config["model"],
+    )
+    monkeypatch.setattr(rp, "load_config", lambda: config)
+    monkeypatch.setattr(
+        rp,
+        "get_compatible_custom_providers",
+        lambda _config=None: config["custom_providers"],
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_provider",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bare custom must resolve before provider auto-detection")
+        ),
+    )
+    monkeypatch.setattr(rp, "_try_resolve_from_custom_pool", lambda *_args, **_kwargs: None)
+
+    resolved = rp.resolve_runtime_provider(requested="custom")
+
+    assert resolved["provider"] == "custom"
+    assert resolved["base_url"] == "http://custom-gateway.example:8045/v1"
+    assert resolved["api_key"] == "sk-custom-gateway"
+    assert resolved["api_mode"] == "codex_responses"
+
+
 def test_bare_custom_uses_loopback_model_base_url_when_provider_not_custom(monkeypatch):
     """Regression for #14676: /model can select Custom while YAML still lists another provider."""
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "openrouter")

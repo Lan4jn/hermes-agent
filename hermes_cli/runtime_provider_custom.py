@@ -470,6 +470,11 @@ def _resolve_named_custom_runtime(*, requested_provider: str, explicit_api_key: 
         requested_norm = "custom"
     if requested_norm == "custom" and explicit_base_url:
         return _resolve_direct_alias_runtime(requested_provider, explicit_api_key, explicit_base_url)
+    if requested_norm == "custom":
+        configured_base_url = str(rp._get_model_config().get("base_url") or "").strip()
+        canonical = rp.find_custom_provider_identity(configured_base_url)
+        if canonical:
+            requested_provider = canonical
     custom_provider = rp._get_named_custom_provider(requested_provider)
     if not custom_provider:
         return None
