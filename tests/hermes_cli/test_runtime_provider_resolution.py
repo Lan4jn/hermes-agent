@@ -8,6 +8,28 @@ import pytest
 from hermes_cli import runtime_provider as rp
 
 
+def test_get_model_config_preserves_mapping_fields(monkeypatch):
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "model": {
+                "default": "gemini-3.8-flash-high",
+                "provider": "custom",
+                "base_url": "http://custom-gateway.example:8045/v1",
+                "api_mode": "codex_responses",
+            }
+        },
+    )
+
+    assert rp._get_model_config() == {
+        "default": "gemini-3.8-flash-high",
+        "provider": "custom",
+        "base_url": "http://custom-gateway.example:8045/v1",
+        "api_mode": "codex_responses",
+    }
+
+
 def test_configured_api_key_provider_without_key_fails_closed(monkeypatch):
     """A saved provider must not resolve as another authenticated provider."""
     monkeypatch.setattr(

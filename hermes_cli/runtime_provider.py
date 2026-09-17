@@ -377,7 +377,25 @@ def _get_model_config() -> Dict[str, Any]:
     model_cfg = config.get("model")
     if isinstance(model_cfg, str) and model_cfg.strip():
         return {"default": model_cfg.strip()}
-    return {}
+    if not isinstance(model_cfg, dict):
+        return {}
+    cfg = dict(model_cfg)
+    if not cfg.get("default") and cfg.get("model"):
+        cfg["default"] = cfg["model"]
+    default = cfg.get("default")
+    if isinstance(default, dict):
+        cfg_model, cfg_provider = _config_mod.split_model_config_default(default)
+        cfg_provider = cfg_provider or str(model_cfg.get("provider") or "")
+        cfg["default"] = cfg_model
+        if cfg_provider and not cfg.get("provider"):
+            cfg["provider"] = cfg_provider
+        default = cfg_model
+    base_url = str(cfg.get("base_url") or "").strip()
+    if not str(default or "").strip() and base_url and base_url_hostname(base_url) in ("localhost", "127.0.0.1"):
+        detected = _auto_detect_local_model(base_url)
+        if detected:
+            cfg["default"] = detected
+    return cfg
 
 
 def _provider_supports_explicit_api_mode(provider: Optional[str], configured_provider: Optional[str] = None) -> bool:
