@@ -1333,6 +1333,73 @@ class TestSendUpdatePrompt:
         assert datas == ["update_prompt:y", "update_prompt:n"]
 
 
+class TestQQBotInboundAndLeaseTimeoutRegression:
+    """Regression tests for QQBot inbound message preparation and TurnLeaseTimeoutError handling."""
+
+    @pytest.mark.asyncio
+    async def test_prepare_inbound_message_text_shared_session_no_name_error(self):
+        from gateway.run import GatewayRunner
+        from gateway.session import SessionSource, Platform
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = {"gateway": {"group_sessions_per_user": False}}
+
+        source = SessionSource(
+            platform=Platform.QQBOT,
+            chat_id="group:123",
+            user_id="user:456",
+            user_name="test_user\ninline",
+            chat_type="group",
+            thread_id=None,
+        )
+
+        mock_event = mock.MagicMock()
+        mock_event.text = "hello qqbot"
+
+        result = await runner._prepare_inbound_message_text(
+            event=mock_event,
+            source=source,
+            history=[],
+            session_key="agent:main:qqbot:group:123",
+        )
+        assert "hello qqbot" in result
+        assert "test_user" in result
+        assert "\n" not in result.split(":")[0]
+
+    @pytest.mark.asyncio
+    async def test_handle_message_turn_lease_timeout_returns_retry_message_no_name_error(self):
+        from gateway.run import GatewayRunner
+        from gateway.session import SessionSource, Platform
+        from gateway.turn_lease import TurnLeaseTimeoutError
+
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = {}
+
+        source = SessionSource(
+            platform=Platform.QQBOT,
+            chat_id="user:123",
+            user_id="user:123",
+            user_name="user",
+            chat_type="dm",
+            thread_id=None,
+        )
+
+        mock_event = mock.MagicMock()
+        mock_event.text = "concurrent message"
+
+        async def _fake_handle(*args, **kwargs):
+            raise TurnLeaseTimeoutError("session-lease-id")
+
+        with mock.patch.object(runner, "_handle_message_with_agent", side_effect=_fake_handle):
+            reply = await runner._handle_message(
+                event=mock_event,
+                source=source,
+                raw_message_id="msg-1",
+            )
+            assert reply is not None
+            assert "Another turn is still running" in reply
+
+
 # ---------------------------------------------------------------------------
 # _send_identify includes INTERACTION intent
 # ---------------------------------------------------------------------------
