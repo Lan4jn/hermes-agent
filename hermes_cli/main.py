@@ -2098,6 +2098,10 @@ _FROZEN_UPDATER_SURFACE: dict[str, tuple[str, ...]] = {
     "hermes_cli.dashboard_procs": (
         "_detect_concurrent_hermes_instances", "_kill_stale_dashboard_processes",
     ),
+    "hermes_cli.main_install_repair": (
+        "_verify_console_scripts_installed", "_verify_core_dependencies_installed",
+        "_verify_editable_install_metadata",
+    ),
 }
 _FROZEN_ATTR_SOURCES: dict[str, str] = {
     attr: module for module, attrs in _FROZEN_UPDATER_SURFACE.items() for attr in attrs

@@ -24,22 +24,43 @@ _INSTALL_DEFINING_FILES = "pyproject.toml", "setup.py", "setup.cfg", "MANIFEST.i
 def _editable_install_is_current(git_cmd, cwd, pre_pull_sha: str | None) -> bool:
     """True when the pulled commits cannot have invalidated the editable install: ``uv pip install
     -e .`` always rewrites console-script shims (Windows: ``hermes.exe`` quarantine, ``os error 32``
-    on a lost race), so skip it when only non-install files changed. Safe because the editable
-    finder uses a *static* module list. Fails closed: no pre-pull SHA or failed diff -> False."""
+    on a lost race), so skip it when only non-install files changed.
+
+    Safe because the editable finder uses a *static* module list derived from setup.py
+    _root_py_modules(). However, any commit adding, removing, or modifying root-level .py files
+    (e.g. hermes_state_ids.py) or root packages invalidates that static module list, so root-level
+    code changes MUST invalidate the editable install. Fails closed: no pre-pull SHA or failed
+    diff -> False."""
     if not pre_pull_sha:
         return False
     try:
         result = subprocess.run(
-            git_cmd + ["diff", "--name-only", f"{pre_pull_sha}..HEAD", "--"] + list(_INSTALL_DEFINING_FILES),
+            git_cmd + ["diff", "--name-only", f"{pre_pull_sha}..HEAD"],
             cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return result.returncode == 0 and not result.stdout.strip()
+    if result.returncode != 0:
+        return False
+    changed = [line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()]
+    for p in changed:
+        if p in _INSTALL_DEFINING_FILES:
+            return False
+        # Root single-file module (e.g. "hermes_state_ids.py")
+        if "/" not in p and p.endswith(".py"):
+            return False
+        # Root top-level package additions/deletions (e.g. "new_pkg/__init__.py")
+        parts = p.split("/")
+        if len(parts) == 2 and parts[1] == "__init__.py":
+            return False
+    return True
 
 
 # Modules imported on every startup. Unlike _UPDATE_CRITICAL_FILES (only parsed) these are
 # *imported*, catching cross-module breakage (a name pulled from a sibling no longer exists).
-_UPDATE_CRITICAL_MODULES = "hermes_cli.main", "run_agent", "model_tools", "toolsets"
+_UPDATE_CRITICAL_MODULES = (
+    "hermes_cli.main", "run_agent", "model_tools", "toolsets",
+    "hermes_state_ids", "hermes_state", "hermes_constants",
+)
 
 
 def _critical_module_import_failures(
@@ -83,8 +104,10 @@ def _critical_module_import_failures(
             venv_python = venv_python_path(Path(root) / "venv", windows=_m()._is_windows())
             if venv_python.exists():
                 interpreter = str(venv_python)
+        import tempfile
+        probe_cwd = tempfile.gettempdir()
         result = subprocess.run(
-            [interpreter, "-c", probe], cwd=str(root), capture_output=True, text=True,
+            [interpreter, "-c", probe], cwd=probe_cwd, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=120)
     except subprocess.TimeoutExpired:
         return _probe_failure("TimeoutExpired", "timed out before reporting import health")
@@ -1006,12 +1029,14 @@ def _sync_python_dependencies_after_pull(
         # self-heals (both verifiers reinstall what they find missing).
         _m()._verify_core_dependencies_installed(install_prefix, env=lazy_env, group=install_group)
         _m()._verify_console_scripts_installed(install_prefix, env=lazy_env)
+        _m()._verify_editable_install_metadata(install_prefix, env=lazy_env)
     else:
         if is_termux and _is_android_python():
             print("  → Termux/Android detected: prebuilding psutil with Linux source path compatibility...")
             _install_psutil_android_compat(install_prefix, env=lazy_env)
         _m()._install_python_dependencies_with_optional_fallback(
             install_prefix, env=lazy_env, group=install_group)
+        _m()._verify_editable_install_metadata(install_prefix, env=lazy_env)
 
     # Clear the core breadcrumb before lazy refresh, which uses its own marker so a lazy
     # failure can't be "healed" by a narrow core import probe.

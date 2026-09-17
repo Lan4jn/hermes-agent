@@ -1184,6 +1184,103 @@ def _verify_core_dependencies_installed(
         ok="  ✓ All declared core dependencies now installed")
 
 
+_ROOT_MODULES_CHECK_SCRIPT = (
+    "import importlib, sys\n"
+    "missing = []\n"
+    "for name in sys.argv[1:]:\n"
+    "    try:\n"
+    "        importlib.import_module(name)\n"
+    "    except Exception:\n"
+    "        missing.append(name)\n"
+    "if missing:\n"
+    "    print('\\n'.join(missing))\n"
+    "    sys.exit(1)\n"
+)
+
+
+def _discover_root_py_modules(project_root: Path) -> list[str]:
+    """Return top-level single-file modules (.py files in project root, excluding setup.py).
+
+    Derived identically to setup.py's _root_py_modules(), safe to call without importing setup.py.
+    """
+    try:
+        names = os.listdir(project_root)
+    except OSError:
+        return []
+    return sorted(
+        name[:-3]
+        for name in names
+        if name.endswith(".py") and name != "setup.py"
+    )
+
+
+def _verify_editable_install_metadata(
+    install_cmd_prefix: list[str], *, env: dict[str, str] | None = None
+) -> None:
+    """Ensure root modules declared by setup.py are importable in target venv from non-source cwd.
+
+    When an editable install is reused across updates or directory transfers, setuptools
+    build_meta's static MAPPING in the editable finder can become stale if root modules were
+    added (such as hermes_state_ids). Probed from a temp directory outside PROJECT_ROOT without
+    PYTHONPATH so sys.path[0] does not mask missing editable mappings. Any import failure triggers
+    an editable reinstall with `--no-deps` to refresh metadata without re-resolving external wheels.
+    """
+    venv_python = _resolve_install_target_python(install_cmd_prefix, env)
+    if venv_python is None:
+        return
+    import tempfile
+    from hermes_cli.main import PROJECT_ROOT
+    expected_modules = _discover_root_py_modules(PROJECT_ROOT)
+    if not expected_modules:
+        expected_modules = [
+            "run_agent", "model_tools", "toolsets", "hermes_state",
+            "hermes_state_ids", "hermes_constants", "hermes_logging",
+            "batch_runner", "cli"
+        ]
+
+    probe_env = dict(env) if env else dict(os.environ)
+    probe_env.pop("PYTHONPATH", None)
+
+    def _probe_root_modules():
+        try:
+            return _venv_probe(
+                venv_python, _ROOT_MODULES_CHECK_SCRIPT, *expected_modules,
+                cwd=tempfile.gettempdir(), env=probe_env)
+        except Exception as e:
+            logger.debug("editable install verification probe failed: %s", e)
+            return None
+
+    result = _probe_root_modules()
+    if result is None or result.returncode == 0:
+        return True
+
+    missing = _nonblank_lines(result.stdout)
+    if not missing:
+        return
+
+    print(
+        f"  ⚠ Verification: {len(missing)} root module(s) missing from editable install mapping: "
+        f"{', '.join(missing[:6])}{'...' if len(missing) > 6 else ''}")
+    print("  → Refreshing editable install metadata with --no-deps...")
+    scripts_dir = _venv_scripts_dir() if _is_windows() else None
+    repaired = _run_repair_step(
+        _run_quarantined_install,
+        install_cmd_prefix + ["install", "--no-deps", "-e", "."],
+        env=env,
+        scripts_dir=scripts_dir,
+        cwd=PROJECT_ROOT,
+        log_msg="editable install metadata refresh failed: %s",
+        fail_msg="  ⚠ Editable install metadata refresh failed; check output above.")
+    if not repaired:
+        return False
+    second_result = _probe_root_modules()
+    if second_result is not None and second_result.returncode == 0:
+        return True
+    still_missing = _nonblank_lines(second_result.stdout) if second_result else missing
+    logger.warning("Editable install metadata refresh incomplete; missing root module(s): %s", still_missing)
+    return False
+
+
 def _resolve_install_target_python(
     install_cmd_prefix: list[str], env: dict[str, str] | None) -> Path | None:
     """Python interpreter the install targeted: ``VIRTUAL_ENV`` from ``env`` for the
