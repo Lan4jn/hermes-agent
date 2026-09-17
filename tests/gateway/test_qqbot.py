@@ -1339,10 +1339,15 @@ class TestQQBotInboundAndLeaseTimeoutRegression:
     @pytest.mark.asyncio
     async def test_prepare_inbound_message_text_shared_session_no_name_error(self):
         from gateway.run import GatewayRunner
+        from gateway.config import GatewayConfig
+        from gateway.platforms.event import MessageEvent
         from gateway.session import SessionSource, Platform
 
-        runner = GatewayRunner.__new__(GatewayRunner)
-        runner.config = {"gateway": {"group_sessions_per_user": False}}
+        config = GatewayConfig()
+        config.group_sessions_per_user = False
+        runner = GatewayRunner(config)
+        runner.session_store = mock.AsyncMock()
+        runner._session_sources = {}
 
         source = SessionSource(
             platform=Platform.QQBOT,
@@ -1353,27 +1358,45 @@ class TestQQBotInboundAndLeaseTimeoutRegression:
             thread_id=None,
         )
 
-        mock_event = mock.MagicMock()
-        mock_event.text = "hello qqbot"
+        event = MessageEvent(
+            text="hello qqbot",
+            source=source,
+            message_id="msg-1",
+        )
 
         result = await runner._prepare_inbound_message_text(
-            event=mock_event,
+            event=event,
             source=source,
             history=[],
             session_key="agent:main:qqbot:group:123",
         )
+        assert result is not None
         assert "hello qqbot" in result
         assert "test_user" in result
-        assert "\n" not in result.split(":")[0]
+        assert "\n" not in result.split("]")[0]
 
     @pytest.mark.asyncio
     async def test_handle_message_turn_lease_timeout_returns_retry_message_no_name_error(self):
         from gateway.run import GatewayRunner
+        from gateway.config import GatewayConfig
+        from gateway.platforms.event import MessageEvent
         from gateway.session import SessionSource, Platform
         from gateway.turn_lease import TurnLeaseTimeoutError
 
-        runner = GatewayRunner.__new__(GatewayRunner)
-        runner.config = {}
+        config = GatewayConfig()
+        runner = GatewayRunner(config)
+        runner.adapters = {}
+        runner._running_agents = {}
+        runner._running_agents_ts = {}
+        runner._pending_messages = {}
+        runner._pending_approvals = {}
+        runner._is_user_authorized = lambda _source: True
+        runner._session_db = mock.MagicMock()
+        runner.session_store = mock.MagicMock()
+        runner.session_store.has_platform_message_id.return_value = False
+        runner.session_store.update_session = mock.MagicMock()
+        runner._persist_active_agents = mock.MagicMock()
+        runner._clear_durable_active_turn = mock.AsyncMock()
 
         source = SessionSource(
             platform=Platform.QQBOT,
@@ -1384,20 +1407,20 @@ class TestQQBotInboundAndLeaseTimeoutRegression:
             thread_id=None,
         )
 
-        mock_event = mock.MagicMock()
-        mock_event.text = "concurrent message"
+        event = MessageEvent(
+            text="concurrent message",
+            source=source,
+            message_id="msg-2",
+        )
 
         async def _fake_handle(*args, **kwargs):
-            raise TurnLeaseTimeoutError("session-lease-id")
+            raise TurnLeaseTimeoutError("session-lease-id", owner_key="key-1", generation=1, wait_seconds=5.0)
 
         with mock.patch.object(runner, "_handle_message_with_agent", side_effect=_fake_handle):
-            reply = await runner._handle_message(
-                event=mock_event,
-                source=source,
-                raw_message_id="msg-1",
-            )
+            reply = await runner._handle_message(event)
             assert reply is not None
             assert "Another turn is still running" in reply
+            assert "protect the transcript" in reply
 
 
 # ---------------------------------------------------------------------------
