@@ -11,6 +11,8 @@ import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { Toast } from "@nous-research/ui/ui/components/toast";
 import { api } from "@/lib/api";
 import type { AutomationBlueprint, AutomationBlueprintField } from "@/lib/api";
+import { useI18n } from "@/i18n";
+import { blueprintsEn } from "@/i18n/pagesEn";
 import { cn, themedBody } from "@/lib/utils";
 
 interface AutomationBlueprintsProps {
@@ -77,6 +79,8 @@ function BlueprintCard({
   showToast: (message: string, type: "error" | "success") => void;
   onCreated?: () => void;
 }) {
+  const { t } = useI18n();
+  const text = t.blueprints ?? blueprintsEn;
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(blueprint));
   const [submitting, setSubmitting] = useState(false);
@@ -124,7 +128,7 @@ function BlueprintCard({
             size="sm"
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Cancel" : "Set up"}
+            {open ? t.common.cancel : text.useBlueprint}
           </Button>
         </div>
 
@@ -154,7 +158,7 @@ function BlueprintCard({
                 disabled={submitting}
                 prefix={submitting ? <Spinner /> : <Clock />}
               >
-                Schedule it
+                {t.cron.schedule}
               </Button>
             </div>
           </div>

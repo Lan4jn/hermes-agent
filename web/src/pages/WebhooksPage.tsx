@@ -26,6 +26,8 @@ import { Card, CardContent } from "@nous-research/ui/ui/components/card";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { Label } from "@nous-research/ui/ui/components/label";
 import { usePageHeader } from "@/contexts/usePageHeader";
+import { useI18n } from "@/i18n";
+import { webhooksEn } from "@/i18n/pagesEn";
 import { cn, themedBody } from "@/lib/utils";
 
 interface CreatedWebhook {
@@ -57,6 +59,8 @@ function CopyButton({ value }: { value: string }) {
 }
 
 export default function WebhooksPage() {
+  const { t } = useI18n();
+  const text = t.webhooks ?? webhooksEn;
   const [data, setData] = useState<WebhooksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [enabling, setEnabling] = useState(false);
@@ -263,13 +267,13 @@ export default function WebhooksPage() {
           setCreateModalOpen(true);
         }}
       >
-        New subscription
+        {text.newWebhook}
       </Button>,
     );
     return () => {
       setEnd(null);
     };
-  }, [setEnd, enabled, enabling, loading]);
+  }, [setEnd, enabled, enabling, loading, text.newWebhook]);
 
   if (loading) {
     return (
@@ -289,11 +293,11 @@ export default function WebhooksPage() {
         open={webhookDelete.isOpen}
         onCancel={webhookDelete.cancel}
         onConfirm={webhookDelete.confirm}
-        title="Delete webhook"
+        title={text.deleteWebhook}
         description={
           pendingName
-            ? `"${pendingName}" — this will permanently remove this webhook subscription.`
-            : "This will permanently remove this webhook subscription."
+            ? text.confirmDelete(pendingName)
+            : text.deleteWebhook
         }
         loading={webhookDelete.isDeleting}
       />
@@ -324,7 +328,7 @@ export default function WebhooksPage() {
                 id="create-webhook-title"
                 className="font-mondwest text-display text-base tracking-wider"
               >
-                New subscription
+                {text.newWebhook}
               </h2>
             </header>
 
@@ -536,7 +540,7 @@ export default function WebhooksPage() {
         {subscriptions.length === 0 && (
           <Card>
             <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              No webhook subscriptions yet.
+              {text.noWebhooks}
             </CardContent>
           </Card>
         )}

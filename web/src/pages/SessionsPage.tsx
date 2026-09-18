@@ -330,7 +330,7 @@ function MessageBubble({
     compaction: {
       bg: "bg-muted/50",
       text: "text-muted-foreground italic",
-      label: "Context handoff",
+      label: t.sessions.roles.compaction || "Context handoff",
     },
   };
 
@@ -549,7 +549,7 @@ function SessionRow({
         size="icon"
         className="text-muted-foreground hover:text-foreground"
         aria-label="Rename session"
-        title="Rename session"
+        title={t.sessions.renameSession || "Rename session"}
         onClick={(e) => {
           e.stopPropagation();
           setRenameValue(
@@ -568,7 +568,7 @@ function SessionRow({
         size="icon"
         className="text-muted-foreground hover:text-foreground"
         aria-label="Export session"
-        title="Export session JSON"
+        title={t.sessions.exportSession || "Export session JSON"}
         onClick={(e) => {
           e.stopPropagation();
           onExport(session.id);

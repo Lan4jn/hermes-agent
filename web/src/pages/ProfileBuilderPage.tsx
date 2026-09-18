@@ -22,6 +22,8 @@ import {
   type McpServerDraft,
   type McpTransport,
 } from "@/lib/mcp-server-create";
+import { useI18n } from "@/i18n";
+import { profileBuilderEn } from "@/i18n/pagesEn";
 import { cn } from "@/lib/utils";
 
 // Profile name rule mirrors the backend (`^[a-z0-9][a-z0-9_-]{0,63}$`).
@@ -58,6 +60,8 @@ interface ModelChoice {
  * bundle" toggle keeps everything (sends no keep list).
  */
 export default function ProfileBuilderPage() {
+  const { t } = useI18n();
+  const text = t.profileBuilder ?? profileBuilderEn;
   const navigate = useNavigate();
   const { toast, showToast } = useToast();
 
@@ -218,6 +222,14 @@ export default function ProfileBuilderPage() {
     return modelChoices.filter((c) => c.label.toLowerCase().includes(f));
   }, [modelChoices, modelFilter]);
 
+  const steps: { id: StepId; label: string }[] = useMemo(() => [
+    { id: "identity", label: text.stepIdentity },
+    { id: "model", label: text.stepModel },
+    { id: "skills", label: text.stepSkills },
+    { id: "mcp", label: text.stepMcps },
+    { id: "review", label: text.stepReview },
+  ], [text]);
+
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
     const f = skillFilter.trim().toLowerCase();
@@ -290,7 +302,7 @@ export default function ProfileBuilderPage() {
 
       {/* Stepper */}
       <div className="flex items-center gap-2 text-sm">
-        {STEPS.map((s, i) => (
+        {steps.map((s, i) => (
           <button
             key={s.id}
             // Identity must be valid before jumping ahead.
@@ -798,22 +810,22 @@ export default function ProfileBuilderPage() {
         <Button
           ghost
           disabled={stepIndex === 0}
-          onClick={() => setStep(STEPS[Math.max(0, stepIndex - 1)].id)}
+          onClick={() => setStep(steps[Math.max(0, stepIndex - 1)].id)}
         >
-          Back
+          {text.back}
         </Button>
         {step === "review" ? (
           <Button onClick={handleCreate} disabled={creating || !nameValid}>
-            {creating ? "Creating…" : "Create profile"}
+            {creating ? t.common.creating : text.createProfile}
           </Button>
         ) : (
           <Button
             disabled={!canAdvance}
             onClick={() =>
-              setStep(STEPS[Math.min(STEPS.length - 1, stepIndex + 1)].id)
+              setStep(steps[Math.min(steps.length - 1, stepIndex + 1)].id)
             }
           >
-            Next
+            {text.next}
           </Button>
         )}
       </div>

@@ -1,4 +1,17 @@
 import type { Translations } from "./types";
+import {
+  channelsEn,
+  filesEn,
+  mcpEn,
+  webhooksEn,
+  systemPageEn,
+  profileBuilderEn,
+  blueprintsEn,
+  modelPickerEn,
+  modelInfoEn,
+  skillEditorEn,
+  toolsetConfigEn,
+} from "./pagesEn";
 
 export const en: Translations = {
   common: {
@@ -192,11 +205,14 @@ export const en: Translations = {
     newChat: "New chat",
     previousPage: "Previous page",
     nextPage: "Next page",
+    renameSession: "Rename session",
+    exportSession: "Export session JSON",
     roles: {
       user: "User",
       assistant: "Assistant",
       system: "System",
       tool: "Tool",
+      compaction: "Context handoff",
     },
   },
 
@@ -312,6 +328,10 @@ export const en: Translations = {
       noneConfigured:
         "No messaging platforms configured. Set one up under Channels to deliver reports.",
     },
+    advancedFields: "Advanced options",
+    providerLabel: "Provider",
+    modelLabel: "Model",
+    defaultOption: "Default",
   },
 
   profiles: {
@@ -892,4 +912,15 @@ export const en: Translations = {
       confirmManyTitle: "Delete {n} tasks?",
     },
   },
+  channels: channelsEn,
+  files: filesEn,
+  mcp: mcpEn,
+  webhooks: webhooksEn,
+  systemPage: systemPageEn,
+  profileBuilder: profileBuilderEn,
+  blueprints: blueprintsEn,
+  modelPicker: modelPickerEn,
+  modelInfo: modelInfoEn,
+  skillEditor: skillEditorEn,
+  toolsetConfig: toolsetConfigEn,
 };

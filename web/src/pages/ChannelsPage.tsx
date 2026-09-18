@@ -35,6 +35,8 @@ import type {
 } from "@/lib/api";
 import { useModalBehavior } from "@/hooks/useModalBehavior";
 import { usePageHeader } from "@/contexts/usePageHeader";
+import { useI18n, type Translations } from "@/i18n";
+import { channelsEn } from "@/i18n/pagesEn";
 import { cn, themedBody } from "@/lib/utils";
 
 // State → badge mapping. The backend emits a small, fixed vocabulary plus
@@ -53,8 +55,20 @@ const STATE_BADGE: Record<
   fatal: { tone: "destructive", label: "Error" },
 };
 
-function stateBadge(state: string) {
-  return STATE_BADGE[state] ?? { tone: "outline" as const, label: state };
+function stateBadge(state: string, t?: Translations) {
+  const channelsText = t?.channels ?? channelsEn;
+  const map: Record<string, string> = {
+    connected: channelsText.statusConnected,
+    pending_restart: channelsText.statusPendingRestart,
+    gateway_stopped: channelsText.statusGatewayStopped,
+    startup_failed: channelsText.statusStartupFailed,
+    not_configured: channelsText.statusNotConfigured,
+    disabled: t?.common.disabled ?? "Disabled",
+    fatal: t?.status.error ?? "Error",
+  };
+  const tone = STATE_BADGE[state]?.tone ?? ("outline" as const);
+  const label = map[state] ?? STATE_BADGE[state]?.label ?? state;
+  return { tone, label };
 }
 
 const TELEGRAM_USER_ID_RE = /^\d+$/;
@@ -130,6 +144,8 @@ function normalizeWhatsAppMode(mode: unknown): "bot" | "self-chat" | null {
 }
 
 export default function ChannelsPage() {
+  const { t } = useI18n();
+  const text = t.channels ?? channelsEn;
   const [platforms, setPlatforms] = useState<MessagingPlatform[]>([]);
   const [envPath, setEnvPath] = useState("~/.hermes/.env");
   const [gatewayStartCommand, setGatewayStartCommand] = useState(
@@ -321,7 +337,7 @@ export default function ChannelsPage() {
             <div className="flex items-center gap-2 text-sm">
               <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
               <span>
-                Changes are saved. Restart the gateway for them to take effect.
+                {text.restartBannerText}
               </span>
             </div>
             <Button
@@ -331,7 +347,7 @@ export default function ChannelsPage() {
               disabled={restarting}
               prefix={restarting ? <Spinner /> : <RotateCw className="h-4 w-4" />}
             >
-              {restarting ? "Restarting…" : "Restart now"}
+              {restarting ? text.restarting : text.restartNow}
             </Button>
           </CardContent>
         </Card>
@@ -342,9 +358,7 @@ export default function ChannelsPage() {
           <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
             <WifiOff className="h-4 w-4 shrink-0" />
             <span>
-              The gateway is not running. Configure channels here, then start the
-              gateway with <code className="font-courier">{gatewayStartCommand}</code>{" "}
-              (or the Restart button above).
+              {text.gatewayNotRunning.replace("{command}", gatewayStartCommand)}
             </span>
           </CardContent>
         </Card>
@@ -392,8 +406,8 @@ export default function ChannelsPage() {
                 className="font-mondwest text-display text-base tracking-wider"
               >
                 {editing.id === "telegram"
-                  ? "Use your own Telegram bot"
-                  : `Configure ${editing.name}`}
+                  ? text.useTelegramBot
+                  : text.configurePlatform(editing.name)}
               </h2>
               {editing.docs_url && (
                 <a
@@ -402,7 +416,7 @@ export default function ChannelsPage() {
                   rel="noopener noreferrer"
                   className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
                 >
-                  {editing.id === "telegram" ? "BotFather guide" : "Setup guide"}
+                  {editing.id === "telegram" ? text.botFatherGuide : text.setupGuide}
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
@@ -515,7 +529,7 @@ export default function ChannelsPage() {
                   className="w-full sm:w-auto"
                   onClick={() => setEditing(null)}
                 >
-                  Cancel
+                  {t.common.cancel}
                 </Button>
                 <Button
                   className="w-full uppercase sm:w-auto"
@@ -524,7 +538,7 @@ export default function ChannelsPage() {
                   disabled={saving}
                   prefix={saving ? <Spinner /> : undefined}
                 >
-                  {saving ? "Saving…" : "Save & enable"}
+                  {saving ? text.saving : text.saveAndEnable}
                 </Button>
               </div>
             </div>
@@ -535,7 +549,7 @@ export default function ChannelsPage() {
       {/* Platform list */}
       <div className="grid gap-3">
         {platforms.map((platform) => {
-          const badge = stateBadge(platform.state);
+          const badge = stateBadge(platform.state, t);
           const busy = togglingId === platform.id;
           const StateIcon =
             platform.state === "connected"
@@ -608,7 +622,7 @@ export default function ChannelsPage() {
                         )
                       }
                     >
-                      Test
+                      {text.test}
                     </Button>
                     {platform.id !== "telegram" && (
                       <Button
@@ -617,7 +631,7 @@ export default function ChannelsPage() {
                         onClick={() => openConfig(platform)}
                         prefix={<Settings2 className="h-4 w-4" />}
                       >
-                        Configure
+                        {text.configure}
                       </Button>
                     )}
                   </div>

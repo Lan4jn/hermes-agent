@@ -15,6 +15,8 @@ import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Switch } from "@nous-research/ui/ui/components/switch";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Toast } from "@nous-research/ui/ui/components/toast";
+import { useI18n } from "@/i18n";
+import { toolsetConfigEn } from "@/i18n/pagesEn";
 import { cn, themedBody } from "@/lib/utils";
 
 interface Props {
@@ -35,6 +37,8 @@ interface Props {
  * post-setup install hook (npm/pip/binary) with a live log tail.
  */
 export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Props) {
+  const { t } = useI18n();
+  const text = t.toolsetConfig ?? toolsetConfigEn;
   const { toast, showToast } = useToast();
   const [config, setConfig] = useState<ToolsetConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -243,7 +247,7 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
               {labelText}
             </span>
             <Badge tone={enabled ? "success" : "outline"} className="text-xs">
-              {enabled ? "Active" : "Inactive"}
+              {enabled ? text.active : text.inactive}
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
@@ -258,8 +262,8 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
             />
             <span className="text-xs text-muted-foreground">
               {enabled
-                ? `Enabled for ${platformText}`
-                : `Disabled for ${platformText}`}
+                ? text.enabledFor(platformText)
+                : text.disabledFor(platformText)}
             </span>
           </div>
         </header>
@@ -272,8 +276,7 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
             </div>
           ) : !config?.has_category ? (
             <p className="text-sm text-muted-foreground py-6 text-center">
-              This toolset has no configurable backends — toggle it on or off
-              above. It works with no provider selection or API keys.
+              {text.noConfigurableBackends}
             </p>
           ) : config.providers.length === 0 ? (
             <p className="text-sm text-muted-foreground py-6 text-center">
@@ -424,8 +427,8 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
                       >
                         {postSetupRunning &&
                         postSetupKey === provider.post_setup
-                          ? "Installing…"
-                          : "Run setup"}
+                          ? text.runningPostSetup
+                          : text.runSetup}
                       </Button>
                     </div>
                   )}

@@ -17,6 +17,20 @@ export type Locale =
   | "hu"
   | "ar";
 
+import type {
+  ChannelsTranslations,
+  FilesTranslations,
+  McpTranslations,
+  WebhooksTranslations,
+  SystemPageTranslations,
+  ProfileBuilderTranslations,
+  BlueprintsTranslations,
+  ModelPickerTranslations,
+  ModelInfoTranslations,
+  SkillEditorTranslations,
+  ToolsetConfigTranslations,
+} from "./pagesTypes";
+
 export interface Translations {
   // ── Common ──
   common: {
@@ -205,11 +219,14 @@ export interface Translations {
     newChat: string;
     previousPage: string;
     nextPage: string;
+    renameSession?: string;
+    exportSession?: string;
     roles: {
       user: string;
       assistant: string;
       system: string;
       tool: string;
+      compaction?: string;
     };
   };
 
@@ -326,6 +343,10 @@ export interface Translations {
       needsHomeChannel?: string;
       noneConfigured?: string;
     };
+    advancedFields?: string;
+    providerLabel?: string;
+    modelLabel?: string;
+    defaultOption?: string;
   };
 
   // ── Plugins page ──
@@ -886,4 +907,15 @@ export interface Translations {
       confirmManyTitle?: string;
     };
   };
+  channels?: ChannelsTranslations;
+  files?: FilesTranslations;
+  mcp?: McpTranslations;
+  webhooks?: WebhooksTranslations;
+  systemPage?: SystemPageTranslations;
+  profileBuilder?: ProfileBuilderTranslations;
+  blueprints?: BlueprintsTranslations;
+  modelPicker?: ModelPickerTranslations;
+  modelInfo?: ModelInfoTranslations;
+  skillEditor?: SkillEditorTranslations;
+  toolsetConfig?: ToolsetConfigTranslations;
 }

@@ -110,6 +110,8 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
   vi.stubGlobal("matchMedia", () => ({ addEventListener() {}, matches: false, media: "", removeEventListener() {} }));
   sessionStorage.clear();
+  localStorage.clear();
+  localStorage.setItem("hermes-locale", "en");
 });
 
 afterEach(async () => {
