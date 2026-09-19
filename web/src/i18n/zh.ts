@@ -643,6 +643,8 @@ export const zh: Translations = {
     viaProvider: "通过 {provider}",
     logout: "退出登录",
     statusUnavailable: "认证状态不可用",
+    openDocs: "打开 {name} 文档",
+    disconnectConfirmDesc: "这将移除 {name} 的已存储 OAuth 令牌。若要再次使用，您需要重新进行认证。",
   },
 
   language: {
@@ -990,5 +992,10 @@ export const zh: Translations = {
     collapseSidePanel: "折叠侧边栏",
     collapseSidePanelAria: "折叠对话侧边栏",
     panel: "面板",
+    sessionTokenUnavailable: "会话令牌不可用。请通过 `hermes dashboard` 打开此页面，而非直接访问。",
+    authFailedReload: "认证失败。请刷新页面以更新会话令牌。",
+    refusedHostMismatch: "请求被拒绝：请求 Host/Origin 与 Dashboard 不匹配。",
+    websocketUnavailable: "当前服务器上的对话 WebSocket 服务不可用。",
+    refusedLocalhostOnly: "请求被拒绝：客户端未经许可（服务器仅绑定至本地 localhost）。",
   },
 };

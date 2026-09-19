@@ -656,6 +656,9 @@ export const en: Translations = {
     viaProvider: "via {provider}",
     logout: "Log out",
     statusUnavailable: "auth status unavailable",
+    openDocs: "Open {name} docs",
+    disconnectConfirmDesc:
+      "This will remove the stored OAuth tokens for {name}. You will need to re-authenticate to use it again.",
   },
 
   language: {
@@ -1008,5 +1011,12 @@ export const en: Translations = {
     collapseSidePanel: "Collapse side panel",
     collapseSidePanelAria: "Collapse chat side panel",
     panel: "panel",
+    sessionTokenUnavailable:
+      "Session token unavailable. Open this page through `hermes dashboard`, not directly.",
+    authFailedReload: "Auth failed. Reload the page to refresh the session token.",
+    refusedHostMismatch: "Refused: request host/origin doesn't match the dashboard.",
+    websocketUnavailable: "Chat websocket unavailable on this server.",
+    refusedLocalhostOnly:
+      "Refused: your client isn't permitted (server bound to localhost only).",
   },
 };

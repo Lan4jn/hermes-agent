@@ -667,6 +667,8 @@ export interface Translations {
     viaProvider?: string;
     logout?: string;
     statusUnavailable?: string;
+    openDocs?: string;
+    disconnectConfirmDesc?: string;
   };
 
   // ── Language switcher ──
@@ -998,5 +1000,10 @@ export interface Translations {
     collapseSidePanel: string;
     collapseSidePanelAria: string;
     panel: string;
+    sessionTokenUnavailable?: string;
+    authFailedReload?: string;
+    refusedHostMismatch?: string;
+    websocketUnavailable?: string;
+    refusedLocalhostOnly?: string;
   };
 }

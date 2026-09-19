@@ -178,6 +178,7 @@ function terminalLineHeightForWidth(layoutWidthPx: number): number {
 }
 
 export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
+  const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termWrapRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -217,7 +218,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     typeof window !== "undefined" &&
     !window.__HERMES_SESSION_TOKEN__ &&
     !window.__HERMES_AUTH_REQUIRED__
-      ? "Session token unavailable. Open this page through `hermes dashboard`, not directly."
+      ? (t.chat?.sessionTokenUnavailable || "Session token unavailable. Open this page through `hermes dashboard`, not directly.")
       : null,
   );
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
@@ -336,7 +337,6 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     scope: string;
     title: string | null;
   }>({ scope: "", title: null });
-  const { t } = useI18n();
   const closeMobilePanel = useCallback(() => setMobilePanelOpenRaw(false), []);
   const modelToolsLabel = useMemo(
     () => `${t.app.modelToolsSheetTitle} ${t.app.modelToolsSheetSubtitle}`,
@@ -1368,7 +1368,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         setBanner(
           ev.reason
             ? `Auth failed (${ev.reason}). Reload to refresh the session.`
-            : "Auth failed. Reload the page to refresh the session token.",
+            : (t.chat?.authFailedReload || "Auth failed. Reload the page to refresh the session token."),
         );
         return;
       }
@@ -1378,7 +1378,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         setBanner(
           ev.reason
             ? `Refused: ${ev.reason}.`
-            : "Refused: request host/origin doesn't match the dashboard.",
+            : (t.chat?.refusedHostMismatch || "Refused: request host/origin doesn't match the dashboard."),
         );
         return;
       }
@@ -1387,7 +1387,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         setBanner(
           ev.reason
             ? `Chat websocket unavailable: ${ev.reason}.`
-            : "Chat websocket unavailable on this server.",
+            : (t.chat?.websocketUnavailable || "Chat websocket unavailable on this server."),
         );
         return;
       }
@@ -1396,7 +1396,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         setBanner(
           ev.reason
             ? `Refused: ${ev.reason}.`
-            : "Refused: your client isn't permitted (server bound to localhost only).",
+            : (t.chat?.refusedLocalhostOnly || "Refused: your client isn't permitted (server bound to localhost only)."),
         );
         return;
       }
