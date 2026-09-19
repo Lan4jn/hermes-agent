@@ -29,6 +29,9 @@ import type {
   ModelInfoTranslations,
   SkillEditorTranslations,
   ToolsetConfigTranslations,
+  ModelsPageTranslations,
+  SkillsPageTranslations,
+  PairingTranslations,
 } from "./pagesTypes";
 
 export interface Translations {
@@ -81,6 +84,16 @@ export interface Translations {
     gatewayHint?: string;
     pluginLoadFailed: string;
     pluginNotRegistered: string;
+    reasoning?: string;
+    effortLow?: string;
+    effortMedium?: string;
+    effortHigh?: string;
+    model?: string;
+    consoleTitle?: string;
+    closeConsole?: string;
+    item?: string;
+    commaSeparatedValues?: string;
+    required?: string;
   };
 
   // ── App shell ──
@@ -228,6 +241,26 @@ export interface Translations {
       tool: string;
       compaction?: string;
     };
+    pruneOldSessions?: string;
+    pruneDesc?: string;
+    olderThanDays?: string;
+    pruneBtn?: string;
+    statTotal?: string;
+    statActive?: string;
+    statArchived?: string;
+    statMessages?: string;
+    statSources?: string;
+    sessionRenamed?: string;
+    failedToRename?: string;
+    failedToExport?: string;
+    enterValidDays?: string;
+    failedToPrune?: string;
+    sessionTitlePlaceholder?: string;
+    saveTitle?: string;
+    cancelRename?: string;
+    importSessions?: string;
+    importSessionsAria?: string;
+    importSessionsTitle?: string;
   };
 
   // ── Analytics page ──
@@ -255,6 +288,11 @@ export interface Translations {
     perDayAvg: string;
     acrossModels: string;
     inOut: string;
+    tokensHiddenTitle?: string;
+    tokensHiddenDesc1?: string;
+    tokensHiddenDesc2?: string;
+    tokensHiddenDesc3?: string;
+    inConfig?: string;
   };
 
   // ── Models page ──
@@ -268,6 +306,9 @@ export interface Translations {
     toolCalls: string;
     noModelsData: string;
     startSession: string;
+    switchModelConfirmTitle?: string;
+    switchModelConfirmDesc?: (model: string) => string;
+    reload?: string;
   };
 
   // ── Logs page ──
@@ -347,6 +388,16 @@ export interface Translations {
     providerLabel?: string;
     modelLabel?: string;
     defaultOption?: string;
+    baseUrlOverride?: string;
+    script?: string;
+    workdir?: string;
+    contextFrom?: string;
+    enabledToolsets?: string;
+    skillsOptional?: string;
+    editJob?: string;
+    allProfiles?: string;
+    profileLabel?: string;
+    oneJobPerLine?: string;
   };
 
   // ── Plugins page ──
@@ -394,6 +445,10 @@ export interface Translations {
     catalogEmpty?: string;
     catalogEmptyDocsLink?: string;
     catalogInstallBtn?: string;
+    setupResults?: string;
+    pythonDependencies?: string;
+    externalDependencies?: string;
+    requiredEnvironment?: string;
     catalogInstalledBadge?: string;
     catalogUpdateBtn?: string;
     catalogRemovedBadge?: string;
@@ -564,6 +619,7 @@ export interface Translations {
     customKeyNamePlaceholder: string;
     add: string;
     invalidKeyName: string;
+    jumpToSection?: string;
   };
 
   // ── OAuth ──
@@ -607,6 +663,10 @@ export interface Translations {
       external: string;
     };
     expiresIn: string;
+    loggedInAs?: string;
+    viaProvider?: string;
+    logout?: string;
+    statusUnavailable?: string;
   };
 
   // ── Language switcher ──
@@ -918,4 +978,25 @@ export interface Translations {
   modelInfo?: ModelInfoTranslations;
   skillEditor?: SkillEditorTranslations;
   toolsetConfig?: ToolsetConfigTranslations;
+  modelsPage?: ModelsPageTranslations;
+  skillsPage?: SkillsPageTranslations;
+  pairing?: PairingTranslations;
+  chat?: {
+    isReconnecting: string;
+    disconnected: string;
+    reconnect: string;
+    reconnectNow: string;
+    sessionEnded: string;
+    startNewSession: string;
+    startNewSessionBtn: string;
+    copyLastResponse: string;
+    copyLastResponseMarkdown: string;
+    copyLastResponseBtn: string;
+    copied: string;
+    showSidePanel: string;
+    showSidePanelAria: string;
+    collapseSidePanel: string;
+    collapseSidePanelAria: string;
+    panel: string;
+  };
 }

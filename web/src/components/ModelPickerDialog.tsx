@@ -353,7 +353,7 @@ export function ModelPickerDialog(props: Props) {
           size="icon"
           onClick={onClose}
           className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-          aria-label="Close"
+          aria-label={t.common.close}
         >
           <X />
         </Button>
@@ -366,7 +366,7 @@ export function ModelPickerDialog(props: Props) {
             {effectiveTitle}
           </h2>
           <p className="text-xs text-muted-foreground mt-1 font-mono">
-            current: {currentModel || "(unknown)"}
+            {text.currentLabel || "current:"} {currentModel || `(${t.common.unknown || "unknown"})`}
             {currentProviderSlug && ` · ${currentProviderSlug}`}
           </p>
         </header>
@@ -421,7 +421,7 @@ export function ModelPickerDialog(props: Props) {
         <footer className="border-t border-border p-3 flex items-center justify-between gap-3 flex-wrap">
           {alwaysGlobal ? (
             <span className="text-xs text-muted-foreground">
-              Saves to config.yaml — applies to new sessions.
+              {text.savesToConfigYaml || "Saves to config.yaml — applies to new sessions."}
             </span>
           ) : (
             <div className="flex items-center gap-2">
@@ -462,11 +462,11 @@ export function ModelPickerDialog(props: Props) {
       </div>
       <ConfirmDialog
         open={!!pendingConfirm}
-        title="Expensive Model Warning"
+        title={text.expensiveWarningTitle || "Expensive Model Warning"}
         description={pendingConfirm?.message}
         destructive
-        confirmLabel="Switch anyway"
-        cancelLabel="Cancel"
+        confirmLabel={text.switchAnyway || "Switch anyway"}
+        cancelLabel={t.common.cancel || "Cancel"}
         loading={applying}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {

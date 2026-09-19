@@ -60,6 +60,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
+import { skillsPageEn } from "@/i18n/pagesEn";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 
@@ -139,6 +140,7 @@ export default function SkillsPage() {
   const [editorSkill, setEditorSkill] = useState<string | null>(null);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
+  const text = t.skillsPage ?? skillsPageEn;
   const { setAfterTitle, setEnd } = usePageHeader();
 
   // ── Profile scoping ──
@@ -415,7 +417,7 @@ export default function SkillsPage() {
                 />
                 <PanelItem
                   icon={Search}
-                  label="Browse hub"
+                  label={text.hub || "Browse hub"}
                   active={view === "hub"}
                   onClick={() => {
                     setView("hub");
@@ -530,7 +532,7 @@ export default function SkillsPage() {
                       onClick={openLearn}
                       prefix={<Sparkles />}
                     >
-                      Learn a skill
+                      {text.learnSkill || "Learn a skill"}
                     </Button>
                     <Button
                       size="sm"
@@ -538,7 +540,7 @@ export default function SkillsPage() {
                       onClick={openCreateEditor}
                       prefix={<Plus />}
                     >
-                      New skill
+                      {text.newSkill || "New skill"}
                     </Button>
                   </div>
                 </div>
@@ -638,7 +640,7 @@ export default function SkillsPage() {
                                   onClick={() => setConfigToolset(ts)}
                                   prefix={<Wrench />}
                                 >
-                                  Configure
+                                  {text.configure || "Configure"}
                                 </Button>
                               </div>
                             </div>
@@ -673,11 +675,9 @@ export default function SkillsPage() {
       <Dialog open={learnOpen} onOpenChange={setLearnOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Learn a skill</DialogTitle>
+            <DialogTitle>{text.learnSkillTitle || "Learn a skill"}</DialogTitle>
             <DialogDescription>
-              Point Hermes at anything and it will distill a reusable skill —
-              following the house authoring standards. Fill in any combination
-              below; the agent gathers the sources and writes the skill in chat.
+              {text.learnSkillDesc || "Point Hermes at anything and it will distill a reusable skill."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
@@ -716,14 +716,14 @@ export default function SkillsPage() {
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button ghost onClick={() => setLearnOpen(false)}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               onClick={submitLearn}
               prefix={<Sparkles />}
               disabled={!learnDir.trim() && !learnUrl.trim() && !learnText.trim()}
             >
-              Learn it
+              {text.teach || "Learn it"}
             </Button>
           </div>
         </DialogContent>
@@ -740,6 +740,8 @@ function SkillRow({
   onEdit,
   noDescriptionLabel,
 }: SkillRowProps) {
+  const { t } = useI18n();
+  const text = t.skillsPage ?? skillsPageEn;
   return (
     <div className="group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
       <div className="pt-0.5 shrink-0">
@@ -767,8 +769,8 @@ function SkillRow({
         ghost
         size="icon"
         className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
-        title="Edit SKILL.md"
-        aria-label={`Edit ${skill.name}`}
+        title={text.editSkillMd || "Edit SKILL.md"}
+        aria-label={`${text.editSkill} ${skill.name}`}
         onClick={onEdit}
       >
         <Pencil />
@@ -863,6 +865,8 @@ function HubBrowser({
   /** Optional profile scoping installs + installed-state badges. */
   profile?: string;
 }) {
+  const { t } = useI18n();
+  const text = t.skillsPage ?? skillsPageEn;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillHubResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1009,7 +1013,7 @@ function HubBrowser({
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 className="h-8 pl-8 text-sm"
-                placeholder="Search the skill hub (GitHub, official, community)…"
+                placeholder={text.searchHubPlaceholder || "Search the skill hub (GitHub, official, community)…"}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -1048,9 +1052,9 @@ function HubBrowser({
               <Download className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="font-mono text-xs">{action}</span>
               {actionRunning ? (
-                <Badge tone="warning">running</Badge>
+                <Badge tone="warning">{text.runningBadge || "running"}</Badge>
               ) : (
-                <Badge tone="success">done</Badge>
+                <Badge tone="success">{text.doneBadge || "done"}</Badge>
               )}
               {!actionRunning && (
                 <Button
@@ -1058,7 +1062,7 @@ function HubBrowser({
                   size="xs"
                   className="ml-auto text-muted-foreground"
                   onClick={() => setAction(null)}
-                  aria-label="Dismiss"
+                  aria-label={t.app?.dismiss || "Dismiss"}
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -1168,9 +1172,11 @@ function ConnectedHubs({
   sources: SkillHubSource[];
   loading: boolean;
 }) {
+  const { t } = useI18n();
+  const text = t.skillsPage ?? skillsPageEn;
   if (loading) {
     return (
-      <p className="text-xs text-muted-foreground">Connecting to skill hubs…</p>
+      <p className="text-xs text-muted-foreground">{text.connectingHubs || "Connecting to skill hubs…"}</p>
     );
   }
   if (sources.length === 0) {

@@ -47,6 +47,7 @@ import {
 } from '@/lib/events-reconnect'
 import { titleFromSessionInfoPayload } from '@/lib/chat-title'
 
+import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { AlertCircle, ChevronDown, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -116,6 +117,7 @@ export function ChatSidebar({
   const feed = useMemo(() => new EventsFeedClient(), [])
 
   const [state, setState] = useState<ConnectionState>('idle')
+  const { t } = useI18n();
   const [info, setInfo] = useState<SessionInfo>({})
   const [modelOpen, setModelOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -373,7 +375,7 @@ export function ChatSidebar({
     >
       <Card className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="text-display text-xs tracking-wider text-text-tertiary">model</div>
+          <div className="text-display text-xs tracking-wider text-text-tertiary">{t.common.model || "model"}</div>
 
           <Button
             ghost

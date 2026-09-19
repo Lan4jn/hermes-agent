@@ -175,6 +175,8 @@ function BlueprintCard({
  * via the same create_job path as everything else.
  */
 export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprintsProps) {
+  const { t } = useI18n();
+  const text = t.blueprints ?? blueprintsEn;
   const { toast, showToast } = useToast();
   const [blueprints, setBlueprints] = useState<AutomationBlueprint[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -195,17 +197,17 @@ export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprint
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-red-500">Couldn't load blueprints: {loadError}</p>;
+    return <p className="text-sm text-red-500">{text.loadError || "Couldn't load blueprints"}: {loadError}</p>;
   }
   if (blueprints === null) {
     return (
       <div className="flex items-center gap-2 opacity-70">
-        <Spinner className="h-4 w-4" /> Loading blueprints…
+        <Spinner className="h-4 w-4" /> {text.loadingBlueprints || "Loading blueprints…"}
       </div>
     );
   }
   if (blueprints.length === 0) {
-    return <p className="opacity-70">No automation blueprints available.</p>;
+    return <p className="opacity-70">{text.noBlueprints || "No automation blueprints available."}</p>;
   }
 
   return (

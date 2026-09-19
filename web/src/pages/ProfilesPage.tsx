@@ -823,7 +823,7 @@ export default function ProfilesPage() {
               size="icon"
               onClick={() => setCreateModalOpen(false)}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close || "Close"}
             >
               <X />
             </Button>
@@ -1248,7 +1248,7 @@ export default function ProfilesPage() {
               size="icon"
               onClick={closeEditor}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close || "Close"}
             >
               <X />
             </Button>

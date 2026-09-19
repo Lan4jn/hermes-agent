@@ -141,7 +141,7 @@ export default function FilesPage() {
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          aria-label="Refresh files"
+          aria-label={text.refreshFiles || "Refresh files"}
         >
           {loading ? <Spinner /> : <RefreshCw />}
         </Button>
@@ -151,7 +151,7 @@ export default function FilesPage() {
       setAfterTitle(null);
       setEnd(null);
     };
-  }, [headerPath, load, loading, setAfterTitle, setEnd]);
+  }, [headerPath, load, loading, setAfterTitle, setEnd, text.refreshFiles]);
 
   const openDirectory = (entry: ManagedFileEntry) => {
     if (entry.is_directory) {
@@ -288,12 +288,12 @@ export default function FilesPage() {
             <Input
               value={pathInput}
               onChange={(event) => setPathInput(event.target.value)}
-              aria-label="Path"
-              placeholder="Path"
+              aria-label={text.path || "Path"}
+              placeholder={text.path || "Path"}
               className="h-9 min-w-0 flex-1 font-mono"
             />
             <Button type="submit" size="sm" outlined className="uppercase">
-              Go
+              {text.go || "Go"}
             </Button>
           </form>
         ) : (
@@ -335,7 +335,7 @@ export default function FilesPage() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         disabled={!canUpload}
-        aria-label="Upload files"
+        aria-label={text.uploadFiles || "Upload files"}
         className={`flex min-h-20 w-full min-w-0 items-center justify-between gap-4 border border-dashed px-4 py-3 text-left transition ${
           draggingFiles
             ? "border-primary bg-primary/10 text-foreground"

@@ -1858,17 +1858,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
               <div className="flex max-w-[min(28rem,calc(100vw-3rem))] flex-col items-start gap-2 border border-warning/60 bg-black/80 px-3 py-2 text-xs text-warning shadow-lg">
                 <div className="tracking-wide">
                   {ptyState === "reconnecting"
-                    ? "Chat is reconnecting."
-                    : "Chat disconnected."}
+                    ? (t.chat?.isReconnecting || "Chat is reconnecting.")
+                    : (t.chat?.disconnected || "Chat disconnected.")}
                 </div>
                 <Button
                   size="sm"
                   outlined
                   onClick={reconnectPty}
                   prefix={<RotateCcw className="h-4 w-4" />}
-                  aria-label="Reconnect chat"
+                  aria-label={t.chat?.reconnect || "Reconnect chat"}
                 >
-                  Reconnect now
+                  {t.chat?.reconnectNow || "Reconnect now"}
                 </Button>
               </div>
             </div>
@@ -1893,14 +1893,14 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           {ptyState === "ended" && (
             <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/60">
               <div className="text-sm tracking-wide text-white/80">
-                Session ended.
+                {t.chat?.sessionEnded || "Session ended."}
               </div>
               <Button
                 onClick={startFreshPty}
                 prefix={<RotateCcw className="h-4 w-4" />}
-                aria-label="Start a new chat session"
+                aria-label={t.chat?.startNewSession || "Start a new chat session"}
               >
-                Start new session
+                {t.chat?.startNewSessionBtn || "Start new session"}
               </Button>
             </div>
           )}
@@ -1908,8 +1908,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           <Button
             ghost
             onClick={handleCopyLast}
-            title="Copy last assistant response as raw markdown"
-            aria-label="Copy last assistant response"
+            title={t.chat?.copyLastResponseMarkdown || "Copy last assistant response as raw markdown"}
+            aria-label={t.chat?.copyLastResponse || "Copy last assistant response"}
             className={cn(
               "absolute z-10",
               "normal-case tracking-normal font-normal",
@@ -1925,7 +1925,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             <span className="inline-flex items-center gap-1.5">
               <Copy className="h-3 w-3 shrink-0" />
               <span className="hidden min-[400px]:inline tracking-wide">
-                {copyState === "copied" ? "copied" : "copy last response"}
+                {copyState === "copied" ? (t.chat?.copied || "copied") : (t.chat?.copyLastResponseBtn || "copy last response")}
               </span>
             </span>
           </Button>
@@ -1934,8 +1934,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             <Button
               ghost
               onClick={toggleChatPanel}
-              title="Show side panel (model + sessions)"
-              aria-label="Show chat side panel"
+              title={t.chat?.showSidePanel || "Show side panel (model + sessions)"}
+              aria-label={t.chat?.showSidePanelAria || "Show chat side panel"}
               className={cn(
                 "absolute z-10",
                 "normal-case tracking-normal font-normal",
@@ -1950,7 +1950,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
               <span className="inline-flex items-center gap-1">
                 <PanelRight className="h-3 w-3 shrink-0" />
                 <span className="hidden min-[400px]:inline tracking-wide">
-                  panel
+                  {t.chat?.panel || "panel"}
                 </span>
               </span>
             </Button>
@@ -1969,8 +1969,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 ghost
                 size="icon"
                 onClick={toggleChatPanel}
-                aria-label="Collapse chat side panel"
-                title="Collapse side panel"
+                aria-label={t.chat?.collapseSidePanelAria || "Collapse chat side panel"}
+                title={t.chat?.collapseSidePanel || "Collapse side panel"}
                 className="text-text-secondary hover:text-midground"
               >
                 <X />

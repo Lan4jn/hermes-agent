@@ -662,7 +662,7 @@ export default function EnvPage() {
     setAfterTitle(
       <nav
         className="flex shrink-0 flex-nowrap items-center gap-1"
-        aria-label="Jump to section"
+        aria-label={t.env.jumpToSection || "Jump to section"}
       >
         {sections.map((s) => (
           <button
@@ -679,7 +679,7 @@ export default function EnvPage() {
     return () => {
       setAfterTitle(null);
     };
-  }, [vars, sections, setAfterTitle]);
+  }, [vars, sections, setAfterTitle, t.env.jumpToSection]);
 
   const handleSave = async (key: string) => {
     const value = edits[key];

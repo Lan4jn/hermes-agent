@@ -305,13 +305,13 @@ export default function McpPage() {
         size="sm"
         onClick={() => setCreateModalOpen(true)}
       >
-        Add Server
+        {text.addServer}
       </Button>,
     );
     return () => {
       setEnd(null);
     };
-  }, [setEnd, loading]);
+  }, [setEnd, loading, text.addServer]);
 
   if (loading) {
     return (
@@ -364,7 +364,7 @@ export default function McpPage() {
               size="icon"
               onClick={closeCreateModal}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close || "Close"}
             >
               <X />
             </Button>
@@ -380,7 +380,7 @@ export default function McpPage() {
 
             <div className="p-5 grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="mcp-name">Name</Label>
+                <Label htmlFor="mcp-name">{text.name}</Label>
                 <Input
                   id="mcp-name"
                   autoFocus
@@ -391,7 +391,7 @@ export default function McpPage() {
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="mcp-transport">Transport</Label>
+                <Label htmlFor="mcp-transport">{text.transport}</Label>
                 <Select
                   id="mcp-transport"
                   value={transport}
@@ -418,7 +418,7 @@ export default function McpPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="mcp-auth">Authentication</Label>
+                    <Label htmlFor="mcp-auth">{text.auth}</Label>
                     <Select
                       id="mcp-auth"
                       value={httpAuth}
@@ -428,14 +428,14 @@ export default function McpPage() {
                         if (nextAuth !== "header") setBearerToken("");
                       }}
                     >
-                      <SelectOption value="none">None</SelectOption>
-                      <SelectOption value="header">Bearer token</SelectOption>
+                      <SelectOption value="none">{t.common.none}</SelectOption>
+                      <SelectOption value="header">{text.bearerToken}</SelectOption>
                       <SelectOption value="oauth">OAuth</SelectOption>
                     </Select>
                   </div>
                   {httpAuth === "header" && (
                     <div className="grid gap-2">
-                      <Label htmlFor="mcp-bearer-token">Bearer token</Label>
+                      <Label htmlFor="mcp-bearer-token">{text.bearerToken}</Label>
                       <Input
                         id="mcp-bearer-token"
                         type="password"
@@ -461,7 +461,7 @@ export default function McpPage() {
               ) : (
                 <>
                   <div className="grid gap-2">
-                    <Label htmlFor="mcp-command">Command</Label>
+                    <Label htmlFor="mcp-command">{text.command}</Label>
                     <Input
                       id="mcp-command"
                       placeholder="npx"
@@ -470,7 +470,7 @@ export default function McpPage() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="mcp-args">Args</Label>
+                    <Label htmlFor="mcp-args">{text.args}</Label>
                     <Input
                       id="mcp-args"
                       placeholder="-y @modelcontextprotocol/server-foo"
@@ -480,7 +480,7 @@ export default function McpPage() {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="mcp-env">
-                      Environment (KEY=VALUE per line)
+                      {text.environment}
                     </Label>
                     <textarea
                       id="mcp-env"
@@ -530,7 +530,7 @@ export default function McpPage() {
               size="icon"
               onClick={() => setInstallEntry(null)}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close || "Close"}
             >
               <X />
             </Button>
@@ -641,7 +641,7 @@ export default function McpPage() {
                         {server.auth === "header" ? "bearer" : server.auth}
                       </Badge>
                     )}
-                    {!server.enabled && <Badge tone="outline">disabled</Badge>}
+                    {!server.enabled && <Badge tone="outline">{t.common.disabled}</Badge>}
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     {server.transport === "http" ? (
@@ -685,7 +685,7 @@ export default function McpPage() {
                     <Button
                       ghost
                       size="sm"
-                      title="Authenticate with OAuth"
+                      title={text.authWithOAuth || "Authenticate with OAuth"}
                       onClick={() => handleAuthenticate(server)}
                       disabled={authenticating === server.name}
                       prefix={
@@ -696,7 +696,7 @@ export default function McpPage() {
                         )
                       }
                     >
-                      Authenticate
+                      {text.authenticate || "Authenticate"}
                     </Button>
                   )}
 
@@ -828,7 +828,7 @@ export default function McpPage() {
                       before they install (matches the docs trust model). */}
                   {entry.install_url && (
                     <p className="mt-1 text-xs text-muted-foreground break-all">
-                      <span className="font-medium">Installs from:</span>{" "}
+                      <span className="font-medium">{text.installsFrom || "Installs from:"}</span>{" "}
                       {isHttpUrl(entry.install_url) ? (
                         <a
                           href={entry.install_url}

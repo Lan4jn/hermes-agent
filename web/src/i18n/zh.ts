@@ -11,6 +11,9 @@ import {
   modelInfoZh,
   skillEditorZh,
   toolsetConfigZh,
+  modelsPageZh,
+  skillsPageZh,
+  pairingZh,
 } from "./pagesZh";
 
 export const zh: Translations = {
@@ -62,6 +65,16 @@ export const zh: Translations = {
     pluginLoadFailed:
       "无法加载此插件的脚本。请检查网络请求（dashboard-plugins/…）以及服务器上的插件路径。",
     pluginNotRegistered: "插件脚本未调用 register()，或执行出错。请打开浏览器控制台查看详情。",
+    reasoning: "推理强度",
+    effortLow: "低",
+    effortMedium: "中",
+    effortHigh: "高",
+    model: "模型",
+    consoleTitle: "Hermes 控制台",
+    closeConsole: "关闭控制台",
+    item: "项",
+    commaSeparatedValues: "逗号分隔的值",
+    required: "必填",
   },
 
   app: {
@@ -204,7 +217,7 @@ export const zh: Translations = {
     previousPage: "上一页",
     nextPage: "下一页",
     renameSession: "重命名会话",
-    exportSession: "导出会话 JSON",
+    exportSession: "导出会话",
     roles: {
       user: "用户",
       assistant: "助手",
@@ -212,6 +225,26 @@ export const zh: Translations = {
       tool: "工具",
       compaction: "上下文交接",
     },
+    pruneOldSessions: "清理历史会话",
+    pruneDesc: "永久移除最后活跃时间超过指定天数的已归档会话。活跃会话绝不会被清理。",
+    olderThanDays: "超过天数（天）",
+    pruneBtn: "清理",
+    statTotal: "总会话",
+    statActive: "存储中活跃",
+    statArchived: "已归档",
+    statMessages: "消息总数",
+    statSources: "渠道来源",
+    sessionRenamed: "会话已重命名",
+    failedToRename: "重命名会话失败",
+    failedToExport: "导出会话失败",
+    enterValidDays: "请输入有效的天数",
+    failedToPrune: "清理会话失败",
+    sessionTitlePlaceholder: "会话标题",
+    saveTitle: "保存标题",
+    cancelRename: "取消重命名",
+    importSessions: "导入会话",
+    importSessionsAria: "导入已导出的会话文件",
+    importSessionsTitle: "导入导出的 JSON 或 JSONL 会话文件",
   },
 
   analytics: {
@@ -238,6 +271,14 @@ export const zh: Translations = {
     perDayAvg: "/天 平均",
     acrossModels: "共 {count} 个模型",
     inOut: "输入 {input} / 输出 {output}",
+    tokensHiddenTitle: "Token 用量分析已隐藏",
+    tokensHiddenDesc1:
+      "本页面上的 Token、费用和每日分析仅为本地调试估算值。该指标仅统计主 Agent 成功响应且返回有效 usage 块的调用，并排除了辅助任务调用（上下文压缩、标题生成、视觉识别、会话搜索、网页抓取、智能审批、MCP 路由及插件模型访问），且不包含服务商端的自动重试和备用降级调用，缓存写入数据也完全未计入。",
+    tokensHiddenDesc2:
+      "在具有大量辅助流量的模型（如 Kimi K2.6、MiniMax M2.7）上，本地估算值可能比服务商账单低 10 到 100 倍。隐藏这些数据比展示失真的数据更为安全。",
+    tokensHiddenDesc3:
+      "请查阅您的服务商控制台（OpenRouter、Anthropic 等）获取真实的用量和账单信息。如仍需启用本地调试估算，请在配置页面中设置 dashboard.show_token_analytics: true。",
+    inConfig: "配置",
   },
 
   models: {
@@ -250,6 +291,10 @@ export const zh: Translations = {
     toolCalls: "工具调用",
     noModelsData: "该时间段暂无模型使用数据",
     startSession: "开始会话后将在此显示模型数据",
+    switchModelConfirmTitle: "切换模型？",
+    switchModelConfirmDesc: (model) =>
+      `切换到 ${model} 将启动全新对话。当前对话仍将保留在会话列表中，Agent 记忆也会保留。是否立即重新加载？`,
+    reload: "重新加载",
   },
 
   logs: {
@@ -327,6 +372,16 @@ export const zh: Translations = {
     providerLabel: "服务商",
     modelLabel: "模型",
     defaultOption: "默认",
+    baseUrlOverride: "Base URL 覆盖",
+    script: "前置脚本 (Script)",
+    workdir: "工作目录 (Workdir)",
+    contextFrom: "上下文来源任务 ID (context_from)",
+    enabledToolsets: "启用工具集 (enabled_toolsets)",
+    skillsOptional: "附加技能（可选）",
+    editJob: "编辑定时任务",
+    allProfiles: "所有配置档案",
+    profileLabel: "配置档案",
+    oneJobPerLine: "每行一个任务 ID",
   },
 
   profiles: {
@@ -443,6 +498,10 @@ export const zh: Translations = {
     catalogConfirmInstallNote: "插件安装后默认处于禁用状态；安装完成后启用即可激活。",
     catalogRequiresEnv: "需要环境变量",
     removedFromCatalog: "已从目录移除",
+    setupResults: "向导安装结果",
+    pythonDependencies: "Python 依赖项",
+    externalDependencies: "外部系统依赖",
+    requiredEnvironment: "所需环境变量",
   },
 
   skills: {
@@ -535,6 +594,7 @@ export const zh: Translations = {
     customKeyNamePlaceholder: "例如 MY_SERVICE_API_KEY",
     add: "添加",
     invalidKeyName: "只能使用字母、数字和下划线（必须以字母或下划线开头）。",
+    jumpToSection: "跳转至分组",
   },
 
   oauth: {
@@ -579,6 +639,10 @@ export const zh: Translations = {
       external: "外部 CLI",
     },
     expiresIn: "{time}后过期",
+    loggedInAs: "已作为 {label} 登录",
+    viaProvider: "通过 {provider}",
+    logout: "退出登录",
+    statusUnavailable: "认证状态不可用",
   },
 
   language: {
@@ -906,4 +970,25 @@ export const zh: Translations = {
   modelInfo: modelInfoZh,
   skillEditor: skillEditorZh,
   toolsetConfig: toolsetConfigZh,
+  modelsPage: modelsPageZh,
+  skillsPage: skillsPageZh,
+  pairing: pairingZh,
+  chat: {
+    isReconnecting: "对话正在重新连接。",
+    disconnected: "对话连接已断开。",
+    reconnect: "重新连接对话",
+    reconnectNow: "立即重连",
+    sessionEnded: "会话已结束。",
+    startNewSession: "启动全新对话会话",
+    startNewSessionBtn: "开始新会话",
+    copyLastResponse: "复制最后一条回复",
+    copyLastResponseMarkdown: "复制最后一条回复（原始 Markdown）",
+    copyLastResponseBtn: "复制最后回复",
+    copied: "已复制",
+    showSidePanel: "显示侧边栏（模型与会话）",
+    showSidePanelAria: "显示对话侧边栏",
+    collapseSidePanel: "折叠侧边栏",
+    collapseSidePanelAria: "折叠对话侧边栏",
+    panel: "面板",
+  },
 };

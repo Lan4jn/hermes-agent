@@ -235,7 +235,7 @@ export function ToolsetConfigDrawer({ toolset, profile, onClose, onChanged }: Pr
           size="xs"
           className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
           onClick={onClose}
-          aria-label="Close"
+          aria-label={text.close || "Close"}
         >
           <X />
         </Button>

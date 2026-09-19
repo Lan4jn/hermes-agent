@@ -11,6 +11,9 @@ import {
   modelInfoEn,
   skillEditorEn,
   toolsetConfigEn,
+  modelsPageEn,
+  skillsPageEn,
+  pairingEn,
 } from "./pagesEn";
 
 export const en: Translations = {
@@ -63,6 +66,16 @@ export const en: Translations = {
       "Could not load this plugin’s script. Check the Network tab (dashboard-plugins/…) and the server’s plugin path.",
     pluginNotRegistered:
       "The plugin’s script did not call register(), or the script errored. Open the browser console for details.",
+    reasoning: "Reasoning",
+    effortLow: "low",
+    effortMedium: "medium",
+    effortHigh: "high",
+    model: "Model",
+    consoleTitle: "Hermes Console",
+    closeConsole: "Close console",
+    item: "Item",
+    commaSeparatedValues: "comma-separated values",
+    required: "Required",
   },
 
   app: {
@@ -206,7 +219,7 @@ export const en: Translations = {
     previousPage: "Previous page",
     nextPage: "Next page",
     renameSession: "Rename session",
-    exportSession: "Export session JSON",
+    exportSession: "Export session",
     roles: {
       user: "User",
       assistant: "Assistant",
@@ -214,6 +227,27 @@ export const en: Translations = {
       tool: "Tool",
       compaction: "Context handoff",
     },
+    pruneOldSessions: "Prune old sessions",
+    pruneDesc:
+      "Permanently remove archived sessions whose last activity is older than the given number of days. Active sessions are never pruned.",
+    olderThanDays: "Older than (days)",
+    pruneBtn: "Prune",
+    statTotal: "Total",
+    statActive: "Active in store",
+    statArchived: "Archived",
+    statMessages: "Messages",
+    statSources: "Sources",
+    sessionRenamed: "Session renamed",
+    failedToRename: "Failed to rename session",
+    failedToExport: "Failed to export session",
+    enterValidDays: "Enter a valid number of days",
+    failedToPrune: "Failed to prune sessions",
+    sessionTitlePlaceholder: "Session title",
+    saveTitle: "Save title",
+    cancelRename: "Cancel rename",
+    importSessions: "Import sessions",
+    importSessionsAria: "Import exported sessions",
+    importSessionsTitle: "Import exported session JSON or JSONL",
   },
 
   analytics: {
@@ -240,6 +274,14 @@ export const en: Translations = {
     perDayAvg: "/day avg",
     acrossModels: "across {count} models",
     inOut: "{input} in / {output} out",
+    tokensHiddenTitle: "Token analytics hidden",
+    tokensHiddenDesc1:
+      "The token, cost, and per-day analytics on this page are a local debug estimate. They only count successful main-agent responses with a usable usage block, and silently exclude auxiliary calls (context compression, title generation, vision, session search, web extract, smart approvals, MCP routing, plugin LLM access) plus provider-side retries and fallback attempts. Cache writes are missing entirely.",
+    tokensHiddenDesc2:
+      "On models with heavy auxiliary traffic (Kimi K2.6, MiniMax M2.7) the local total can be 10x–100x lower than what your provider bills. Hiding these numbers is safer than letting them look authoritative.",
+    tokensHiddenDesc3:
+      "Check your provider dashboard (OpenRouter, Anthropic, etc.) for actual usage and billing. To re-enable the local debug estimate anyway, set dashboard.show_token_analytics: true in",
+    inConfig: "Config",
   },
 
   models: {
@@ -252,6 +294,10 @@ export const en: Translations = {
     toolCalls: "tool calls",
     noModelsData: "No model usage data for this period",
     startSession: "Start a session to see model data here",
+    switchModelConfirmTitle: "Switch model?",
+    switchModelConfirmDesc: (model) =>
+      `Switching to ${model} starts a fresh chat. Your current chat stays in your Sessions list and the agent's memory is kept. Reload now to apply it?`,
+    reload: "Reload",
   },
 
   logs: {
@@ -332,6 +378,16 @@ export const en: Translations = {
     providerLabel: "Provider",
     modelLabel: "Model",
     defaultOption: "Default",
+    baseUrlOverride: "Base URL override",
+    script: "Script",
+    workdir: "Workdir",
+    contextFrom: "context_from job IDs",
+    enabledToolsets: "enabled_toolsets",
+    skillsOptional: "Skills (optional)",
+    editJob: "Edit Cron Job",
+    allProfiles: "All profiles",
+    profileLabel: "Profile",
+    oneJobPerLine: "one job id per line",
   },
 
   profiles: {
@@ -453,6 +509,10 @@ export const en: Translations = {
       "Plugins install disabled; enable it after install to activate.",
     catalogRequiresEnv: "Requires env",
     removedFromCatalog: "Removed from catalog",
+    setupResults: "Setup results",
+    pythonDependencies: "Python dependencies",
+    externalDependencies: "External dependencies",
+    requiredEnvironment: "Required environment variables",
   },
 
   skills: {
@@ -547,6 +607,7 @@ export const en: Translations = {
     customKeyNamePlaceholder: "e.g. MY_SERVICE_API_KEY",
     add: "Add",
     invalidKeyName: "Use letters, numbers and underscores only (must start with a letter or underscore).",
+    jumpToSection: "Jump to section",
   },
 
   oauth: {
@@ -591,6 +652,10 @@ export const en: Translations = {
       external: "External CLI",
     },
     expiresIn: "expires in {time}",
+    loggedInAs: "Logged in as {label}",
+    viaProvider: "via {provider}",
+    logout: "Log out",
+    statusUnavailable: "auth status unavailable",
   },
 
   language: {
@@ -923,4 +988,25 @@ export const en: Translations = {
   modelInfo: modelInfoEn,
   skillEditor: skillEditorEn,
   toolsetConfig: toolsetConfigEn,
+  modelsPage: modelsPageEn,
+  skillsPage: skillsPageEn,
+  pairing: pairingEn,
+  chat: {
+    isReconnecting: "Chat is reconnecting.",
+    disconnected: "Chat disconnected.",
+    reconnect: "Reconnect chat",
+    reconnectNow: "Reconnect now",
+    sessionEnded: "Session ended.",
+    startNewSession: "Start a new chat session",
+    startNewSessionBtn: "Start new session",
+    copyLastResponse: "Copy last assistant response",
+    copyLastResponseMarkdown: "Copy last assistant response as raw markdown",
+    copyLastResponseBtn: "copy last response",
+    copied: "copied",
+    showSidePanel: "Show side panel (model + sessions)",
+    showSidePanelAria: "Show chat side panel",
+    collapseSidePanel: "Collapse side panel",
+    collapseSidePanelAria: "Collapse chat side panel",
+    panel: "panel",
+  },
 };
