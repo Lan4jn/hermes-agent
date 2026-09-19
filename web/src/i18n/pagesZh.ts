@@ -118,6 +118,41 @@ export const channelsZh: ChannelsTranslations = {
   whatsappPairingCodeHint: "若未填写允许的手机号码，Hermes 将回复配对验证码。您可以在管理面板的“配对”页面中审批。",
   expired: "已过期",
   whatsappSaveAndRestartInstruction: "保存并重启网关以使配置生效。",
+  qqDescription: "通过 QQ 开放平台将 Hermes 连接到 QQ 机器人。",
+  qqFields: {
+    QQ_APP_ID: {
+      prompt: "QQ App ID",
+      description: "QQ 开放平台（q.qq.com）中的 QQ 机器人 App ID",
+    },
+    QQ_CLIENT_SECRET: {
+      prompt: "QQ 客户端密钥",
+      description: "QQ 开放平台中的 QQ 机器人 Client Secret",
+    },
+    QQ_ALLOWED_USERS: {
+      prompt: "允许私聊的 QQ 用户 OpenID",
+      description: "允许直接与机器人私聊的 QQ 用户 OpenID，多个值用英文逗号分隔",
+    },
+    QQ_GROUP_ALLOWED_USERS: {
+      prompt: "允许群消息的 QQ 群 OpenID",
+      description: "允许使用机器人的 QQ 群 OpenID，多个值用英文逗号分隔；群内仍需 @机器人",
+    },
+    QQ_ALLOW_ALL_USERS: {
+      prompt: "允许所有 QQ 用户",
+      description: "无需用户白名单即可允许所有 QQ 用户（true/false）",
+    },
+    QQBOT_HOME_CHANNEL: {
+      prompt: "QQ 默认会话 OpenID",
+      description: "用于定时任务和通知投递的默认 QQ 用户或群 OpenID",
+    },
+    QQBOT_HOME_CHANNEL_NAME: {
+      prompt: "QQ 默认会话名称",
+      description: "默认 QQ 会话在界面中的显示名称",
+    },
+    QQ_SANDBOX: {
+      prompt: "QQ 沙盒模式",
+      description: "启用 QQ 沙盒模式进行开发测试（true/false）",
+    },
+  },
 };
 
 export const filesZh: FilesTranslations = {

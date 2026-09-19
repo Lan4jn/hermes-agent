@@ -37,6 +37,7 @@ import { useModalBehavior } from "@/hooks/useModalBehavior";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n, type Translations } from "@/i18n";
 import { channelsEn } from "@/i18n/pagesEn";
+import { localizeMessagingField } from "@/lib/messaging-field-localization";
 import { cn, themedBody } from "@/lib/utils";
 
 // State → badge mapping. The backend emits a small, fixed vocabulary plus
@@ -458,9 +459,11 @@ export default function ChannelsPage() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                {editing.description}
+                {editing.id === "qqbot" ? text.qqDescription : editing.description}
               </p>
-              {editing.env_vars.map((field: MessagingPlatformEnvVar) => (
+              {editing.env_vars.map((rawField: MessagingPlatformEnvVar) => {
+                const field = localizeMessagingField(editing.id, rawField, text);
+                return (
                 <div className="grid gap-1.5" key={field.key}>
                   <div className="flex items-center gap-1.5">
                     <Label htmlFor={`field-${field.key}`}>
@@ -511,7 +514,8 @@ export default function ChannelsPage() {
                     </span>
                   )}
                 </div>
-              ))}
+                );
+              })}
 
               <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
                 <Button

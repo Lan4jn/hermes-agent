@@ -118,6 +118,41 @@ export const channelsEn: ChannelsTranslations = {
   whatsappPairingCodeHint: "If no allowed numbers were entered, Hermes replies with a pairing code. Approve it from the dashboard Pairing page.",
   expired: "expired",
   whatsappSaveAndRestartInstruction: "Save and restart the gateway.",
+  qqDescription: "Connect Hermes to a QQ Bot through the QQ Open Platform.",
+  qqFields: {
+    QQ_APP_ID: {
+      prompt: "QQ App ID",
+      description: "QQ Bot App ID from the QQ Open Platform (q.qq.com)",
+    },
+    QQ_CLIENT_SECRET: {
+      prompt: "QQ Client Secret",
+      description: "QQ Bot Client Secret from the QQ Open Platform",
+    },
+    QQ_ALLOWED_USERS: {
+      prompt: "Allowed QQ user OpenIDs",
+      description: "Comma-separated QQ user OpenIDs allowed to message the bot directly",
+    },
+    QQ_GROUP_ALLOWED_USERS: {
+      prompt: "Allowed QQ group OpenIDs",
+      description: "Comma-separated QQ group OpenIDs allowed to use the bot; group messages must still @mention it",
+    },
+    QQ_ALLOW_ALL_USERS: {
+      prompt: "Allow all QQ users",
+      description: "Allow all QQ users without an allowlist (true/false)",
+    },
+    QQBOT_HOME_CHANNEL: {
+      prompt: "QQ home channel OpenID",
+      description: "Default QQ user or group OpenID for scheduled jobs and notifications",
+    },
+    QQBOT_HOME_CHANNEL_NAME: {
+      prompt: "QQ home channel name",
+      description: "Display name for the default QQ home channel",
+    },
+    QQ_SANDBOX: {
+      prompt: "QQ sandbox mode",
+      description: "Enable QQ sandbox mode for development testing (true/false)",
+    },
+  },
 };
 
 export const filesEn: FilesTranslations = {

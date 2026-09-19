@@ -1,3 +1,8 @@
+export interface MessagingFieldTranslation {
+  prompt: string;
+  description: string;
+}
+
 export interface ChannelsTranslations {
   title: string;
   subtitle: string;
@@ -100,6 +105,8 @@ export interface ChannelsTranslations {
   whatsappPairingCodeHint: string;
   expired: string;
   whatsappSaveAndRestartInstruction: string;
+  qqDescription: string;
+  qqFields: Record<string, MessagingFieldTranslation>;
 }
 
 export interface FilesTranslations {
