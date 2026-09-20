@@ -59,6 +59,23 @@ class TestIsNetworkAccessible:
             assert is_network_accessible("dual-host.local") is True
 
 
+class TestNormalizeApiServerHost:
+    """Verify normalize_api_server_host contract."""
+
+    def test_normalize_host_values(self):
+        from gateway.platforms.api_server import normalize_api_server_host
+
+        assert normalize_api_server_host(None) is None
+        assert normalize_api_server_host("dual") is None
+        assert normalize_api_server_host("DUAL") is None
+        assert normalize_api_server_host("Dual") is None
+        assert normalize_api_server_host("::") == "::"
+        assert normalize_api_server_host("0.0.0.0") == "0.0.0.0"
+        assert normalize_api_server_host("") == "127.0.0.1"
+        assert normalize_api_server_host("   ") == "127.0.0.1"
+        assert normalize_api_server_host("127.0.0.1") == "127.0.0.1"
+
+
 # ---------------------------------------------------------------------------
 # Integration tests: connect() startup guard
 # ---------------------------------------------------------------------------
@@ -91,6 +108,34 @@ class TestConnectBindGuard:
         assert adapter._api_key == "sk-test"
         assert is_network_accessible("0.0.0.0") is True
         # Combined: the guard condition is False (key is set), so it passes
+
+    def test_dual_stack_adapter_init(self):
+        adapter1 = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": "dual"}))
+        assert adapter1._host is None
+        adapter2 = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": "DUAL"}))
+        assert adapter2._host is None
+        adapter3 = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": None}))
+        assert adapter3._host is None
+
+    @pytest.mark.asyncio
+    async def test_dual_stack_refuses_without_allow_remote(self):
+        """Dual-stack host=None is network-accessible and requires allow_remote=true."""
+        adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": "dual", "key": "a" * 16, "allow_remote": False}))
+        assert adapter._host is None
+        res = await adapter.connect()
+        assert res is False
+
+    @pytest.mark.asyncio
+    async def test_dual_stack_allows_with_allow_remote_and_key(self):
+        """Dual-stack with allow_remote=true and strong key passes guard."""
+        adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={"host": "dual", "port": 0, "key": "a" * 16, "allow_remote": True}))
+        assert adapter._host is None
+        res = await adapter.connect()
+        try:
+            assert res is True
+            assert adapter._site is not None
+        finally:
+            await adapter.disconnect()
 
 
 # ---------------------------------------------------------------------------

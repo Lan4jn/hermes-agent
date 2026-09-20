@@ -234,6 +234,28 @@ def _hermes_version() -> str:
 # Default settings
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8642
+
+
+def normalize_api_server_host(raw_host: Any) -> Optional[str]:
+    """Normalize raw API server host setting into an explicit bind target.
+
+    Semantics:
+    - None, 'dual', 'DUAL' -> None (explicit IPv4 + IPv6 dual-stack binding)
+    - '::' -> '::' (IPv6-only binding)
+    - '0.0.0.0' -> '0.0.0.0' (IPv4-only wildcard)
+    - '' (empty string / whitespace) -> '127.0.0.1' (default loopback)
+    - other -> stripped string
+    """
+    if raw_host is None:
+        return None
+    if isinstance(raw_host, str):
+        val = raw_host.strip()
+        if val.lower() == "dual":
+            return None
+        if not val:
+            return DEFAULT_HOST
+        return val
+    return str(raw_host)
 MAX_STORED_RESPONSES = 100
 MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversations with tool calls
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
@@ -1216,7 +1238,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.API_SERVER)
         extra = config.extra or {}
-        self._host: str = extra.get("host", os.getenv("API_SERVER_HOST", DEFAULT_HOST))
+        raw_host = extra.get("host") if "host" in extra else os.getenv("API_SERVER_HOST", DEFAULT_HOST)
+        self._host: Optional[str] = normalize_api_server_host(raw_host)
         raw_port = extra.get("port")
         if raw_port is None:
             raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
@@ -4512,16 +4535,17 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             if hasattr(sweep_task, "add_done_callback"):
                 sweep_task.add_done_callback(self._background_tasks.discard)
 
-            if is_network_accessible(self._host) and not self._allow_remote:
+            _effective_host = self._host if self._host is not None else "0.0.0.0"
+            if is_network_accessible(_effective_host) and not self._allow_remote:
                 logger.error(
                     "[%s] Refusing to start: binding to %s requires "
                     "platforms.api_server.allow_remote=true. "
                     "Keep the default 127.0.0.1 for local-only access.",
-                    self.name, self._host,
+                    self.name, self._host or "dual",
                 )
                 return False
 
-            if is_network_accessible(self._host):
+            if is_network_accessible(_effective_host):
                 _backend = "local"
                 with suppress(Exception):
                     from hermes_cli.config import load_config as _load_cfg
@@ -4534,7 +4558,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         "with full terminal/file access. Strongly consider a "
                         "sandboxed backend (terminal.backend: docker) and "
                         "firewalling this port to trusted networks only.",
-                        self.name, self._host)
+                        self.name, self._host or "dual")
 
             # Plugin-registered native handlers, wired before AppRunner.setup() freezes the router.
             self._wire_plugin_handlers(self._app)
@@ -4575,13 +4599,13 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 logger.error(
                     "[%s] Could not bind %s:%d: %s. Set a different port in "
                     "config.yaml: platforms.api_server.port",
-                    self.name, self._host, self._port, exc)
+                    self.name, self._host or "dual", self._port, exc)
                 return False
             from gateway.platforms.shared_ingress import listener_base_url
             self._mark_connected(listener_base=listener_base_url(self._host, self._port))
             logger.info(
                 "[%s] API server listening on http://%s:%d (model: %s)",
-                self.name, self._host, self._port, self._model_name)
+                self.name, self._host or "dual", self._port, self._model_name)
             return True
         except Exception as e:
             logger.error("[%s] Failed to start API server: %s", self.name, e)

@@ -678,7 +678,7 @@ The API server gives full access to hermes-agent's toolset, **including terminal
 |----------|---------|-------------|
 | `API_SERVER_ENABLED` | `false` | Enable the API server |
 | `API_SERVER_PORT` | `8642` | HTTP server port |
-| `API_SERVER_HOST` | `127.0.0.1` | Bind address (localhost only by default) |
+| `API_SERVER_HOST` | `127.0.0.1` | Bind address (`127.0.0.1` default; set `dual` for IPv4+IPv6 dual-stack, `0.0.0.0` for IPv4-only, `::` for IPv6-only) |
 | `API_SERVER_KEY` | _(required)_ | Bearer token for auth |
 | `API_SERVER_CORS_ORIGINS` | _(none)_ | Comma-separated allowed browser origins |
 | `API_SERVER_MODEL_NAME` | _(profile name)_ | Model name on `/v1/models`. Defaults to profile name, or `hermes-agent` for default profile. |
@@ -700,6 +700,25 @@ gateway:
 ```
 
 `port`, `key`, `host`, `cors_origins`, and `model_name` are automatically bridged into the platform's `extra` settings, so they behave exactly like their `API_SERVER_*` environment-variable counterparts. Environment variables take precedence over `config.yaml` values. The block is also accepted under `gateway.platforms.api_server:` or a top-level `platforms.api_server:` section.
+
+### IPv4 and IPv6 Dual-Stack Binding
+
+By default, the API server binds to `127.0.0.1` (loopback only). To listen on both IPv4 and IPv6 on the same port, configure `host: dual`:
+
+```yaml
+gateway:
+  platforms:
+    api_server:
+      enabled: true
+      host: dual
+      port: 8642
+      allow_remote: true
+      key: your-secure-api-key
+```
+
+:::note `::` is IPv6-only, not dual-stack
+Binding to `host: "::"` binds strictly to IPv6 (`IPV6_V6ONLY=True` in Python asyncio) and does not accept IPv4 connections. To accept connections over both IPv4 and IPv6 simultaneously on the same port, use `host: dual`. Non-loopback bindings are network-accessible and require `allow_remote: true` and a strong `key`.
+:::
 
 ### Concurrent-run cap
 
