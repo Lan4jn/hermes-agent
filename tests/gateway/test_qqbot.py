@@ -1265,6 +1265,13 @@ class TestSendExecApproval:
         from gateway.platforms.qqbot.adapter import QQAdapter
         return QQAdapter(_make_config(app_id="a", client_secret="b"))
 
+    def test_supports_exec_approval_buttons(self):
+        from gateway.platforms.qqbot.adapter import QQAdapter
+        from gateway.run_turn_runner import _renders_exec_approval_buttons
+
+        assert QQAdapter.supports_exec_approval_buttons() is True
+        assert _renders_exec_approval_buttons(QQAdapter) is True
+
     @pytest.mark.asyncio
     async def test_delegates_to_send_approval_request(self):
         adapter = self._make_adapter()
@@ -1292,7 +1299,34 @@ class TestSendExecApproval:
         assert req.session_key == "sess:abc"
         assert req.command_preview == "rm -rf /tmp/demo"
         assert req.description == "delete temp dir"
+        assert req.allow_permanent is True
         assert calls[0]["reply_to"] == "inbound-42"
+
+    @pytest.mark.asyncio
+    async def test_smart_deny_disables_permanent_button(self):
+        adapter = self._make_adapter()
+        calls = []
+
+        async def fake_send_approval(chat_id, req, reply_to=None):
+            from gateway.platforms.base import SendResult
+            calls.append({"chat_id": chat_id, "req": req, "reply_to": reply_to})
+            return SendResult(success=True, message_id="m-2")
+
+        adapter.send_approval_request = fake_send_approval  # type: ignore[assignment]
+
+        result = await adapter.send_exec_approval(
+            chat_id="user-1",
+            command="git reset --hard",
+            session_key="sess:smart",
+            description="dangerous reset",
+            smart_denied=True,
+            allow_permanent=True,
+        )
+        assert result.success
+        assert len(calls) == 1
+        req = calls[0]["req"]
+        assert req.allow_permanent is False
+        assert "Owner override applies to this one operation only." in req.description
 
 
 class TestSendUpdatePrompt:

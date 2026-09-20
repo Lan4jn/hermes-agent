@@ -64,6 +64,7 @@ except ImportError:
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
+    ExecApprovalPrompt,
     MessageEvent,
     MessageType,
     SendResult,
@@ -2783,44 +2784,22 @@ class QQAdapter(BasePlatformAdapter):
     # for button-based approval / update-confirm UX. Discord, Telegram, Slack,
     # Matrix, and Feishu already implement the same contract.
 
-    async def send_exec_approval(
-            self,
-            chat_id: str,
-            command: str,
-            session_key: str,
-            description: str = "dangerous command",
-            metadata: Optional[Dict[str, Any]] = None,
-        allow_permanent: bool = True,
-        allow_session: bool = True,
-        smart_denied: bool = False,
-    ) -> SendResult:
-        """Send a button-based exec-approval prompt for a dangerous command.
-
-        Called by ``gateway/run.py``'s ``_approval_notify_sync`` when the
-        agent is blocked waiting for approval. Button clicks resolve via
-        :func:`tools.approval.resolve_gateway_approval` — dispatched by the
-        adapter's interaction callback (:meth:`_default_interaction_dispatch`).
-        """
-        del metadata  # QQ doesn't have thread_id / DM targeting overrides.
-        del allow_session  # QQ's 3-button keyboard has no session tier (once/always/deny).
-        if smart_denied:
+    async def _send_exec_approval_prompt(self, prompt: ExecApprovalPrompt) -> SendResult:
+        description = prompt.description
+        if prompt.smart_denied:
             description += " Owner override applies to this one operation only."
-
-        # Use the reply-to message for passive-message context when we have one.
-        # QQ requires a msg_id on outbound messages to a user we've never
-        # seen; the last inbound msg_id is the natural choice.
-        msg_id = self._last_msg_id.get(chat_id)
-
         req = ApprovalRequest(
-            session_key=session_key,
+            session_key=prompt.session_key,
             title="Execute this command?",
             description=description,
-            command_preview=command,
+            command_preview=prompt.command,
             timeout_sec=self._APPROVAL_TIMEOUT_SECONDS,
-            allow_permanent=allow_permanent and not smart_denied,
+            allow_permanent="always" in prompt.choices,
         )
         return await self.send_approval_request(
-            chat_id, req, reply_to=msg_id,
+            prompt.chat_id,
+            req,
+            reply_to=self._last_msg_id.get(prompt.chat_id),
         )
 
     _APPROVAL_TIMEOUT_SECONDS = 300  # matches gateway's default gateway_timeout
