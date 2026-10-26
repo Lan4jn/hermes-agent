@@ -29,6 +29,10 @@ describe("copyTextToClipboard", () => {
       "navigator",
       { clipboard: { writeText } } as unknown as Navigator,
     );
+    setGlobal(
+      "window",
+      { isSecureContext: true } as unknown as Window & typeof globalThis,
+    );
     setGlobal("document", undefined);
 
     await expect(copyTextToClipboard("CODEX-1234")).resolves.toBe(true);
@@ -52,6 +56,10 @@ describe("copyTextToClipboard", () => {
     setGlobal(
       "navigator",
       { clipboard: { writeText } } as unknown as Navigator,
+    );
+    setGlobal(
+      "window",
+      { isSecureContext: true } as unknown as Window & typeof globalThis,
     );
     setGlobal("document", {
       body: { appendChild, removeChild },

@@ -301,4 +301,3 @@ def provider(responder: Callable[[dict[str, Any]], Any]) -> Iterator[FakeLLMServ
         yield srv
     finally:
         srv.stop()
-

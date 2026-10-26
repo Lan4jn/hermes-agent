@@ -78,6 +78,9 @@ _STATIC_FEATURE_FLAGS = {
 # feature is advertised only while that "features" flag is truthy on this listener.
 _CAPABILITY_ENDPOINTS = (
     ("health", ("GET", "/health")), ("health_detailed", ("GET", "/health/detailed")),
+    ("message_api", ("POST", "/message")),
+    ("message_sessions", ("GET", "/api/message/sessions")),
+    ("message_session", ("GET", "/api/message/sessions/{session_id}")),
     ("models", ("GET", "/v1/models")), ("model_options", ("GET", "/api/model/options")),
     ("chat_completions", ("POST", "/v1/chat/completions")),
     ("responses", ("POST", "/v1/responses")), ("runs", ("POST", "/v1/runs")),
@@ -141,6 +144,7 @@ from gateway.platforms import api_server_room_grants as _room_grants
 from gateway.platforms import api_server_runs as _api_runs
 from gateway.platforms.api_server_openai_routes import OpenAICompatRoutesMixin
 from gateway.platforms.api_server_memory_sessions import ApiServerMemorySessions
+from gateway.platforms.message_api import MessageAPIMixin
 from gateway.platforms.base import (
     MEDIA_TAG_CLEANUP_RE, BasePlatformAdapter, SendResult, _terminal_sentinel_start, is_network_accessible,
     validate_media_delivery_path)
@@ -220,13 +224,36 @@ DEFAULT_PORT = 8642
 _BIND_ATTEMPTS = 5  # EADDRINUSE retries while a restart's predecessor releases the port (#91547)
 
 
-def listen_address(extra: dict[str, Any]) -> tuple[str, int]:
+def normalize_api_server_host(raw_host: Any) -> Optional[str]:
+    """Normalize raw API server host setting into an explicit bind target.
+
+    Semantics:
+    - None, 'dual', 'DUAL' -> None (explicit IPv4 + IPv6 dual-stack binding)
+    - '::' -> '::' (IPv6-only binding)
+    - '0.0.0.0' -> '0.0.0.0' (IPv4-only wildcard)
+    - '' (empty string / whitespace) -> '127.0.0.1' (default loopback)
+    - other -> stripped string
+    """
+    if raw_host is None:
+        return None
+    if isinstance(raw_host, str):
+        val = raw_host.strip()
+        if val.lower() == "dual":
+            return None
+        if not val:
+            return DEFAULT_HOST
+        return val
+    return str(raw_host)
+
+
+def listen_address(extra: Dict[str, Any]) -> tuple[Optional[str], int]:
     """Host/port the adapter binds: config.yaml ``platforms.api_server`` wins over the env fallbacks.
 
     Shared with the CLI restart path, which must wait on the SAME address the replacement will
     bind — an env-only reading missed every config.yaml port (#91547).
     """
-    host = extra.get("host", os.getenv("API_SERVER_HOST", DEFAULT_HOST))
+    raw_host = extra.get("host") if "host" in extra else os.getenv("API_SERVER_HOST", DEFAULT_HOST)
+    host = normalize_api_server_host(raw_host)
     raw_port = extra.get("port")
     if raw_port is None:
         raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
@@ -1096,7 +1123,7 @@ def _run_route_delegate(name: str):
     return _handler
 
 
-class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
+class APIServerAdapter(MessageAPIMixin, OpenAICompatRoutesMixin, BasePlatformAdapter):
     """aiohttp server routing OpenAI-format requests through hermes-agent's AIAgent."""
 
     # Stateless request/response (``send()`` is a stub): async-delivery tools must not promise
@@ -1119,7 +1146,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.API_SERVER)
         extra = config.extra or {}
+        self._init_message_api(extra.get("message_api"))
         self._host, self._port = listen_address(extra)
+        self._allow_remote = _coerce_request_bool(extra.get("allow_remote"), default=False)
         self._api_key: str = extra.get("key", _get_scoped_secret("API_SERVER_KEY", ""))
         self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")))
@@ -1647,6 +1676,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         can assert the /p/<profile>/ mirrors without a listener)."""
         routes: list[tuple] = [
             ("GET", "/health", self._handle_health),
+            ("POST", "/message", self._handle_message_api),
+            ("GET", "/api/message/sessions", self._handle_list_message_sessions),
+            ("GET", "/api/message/sessions/{session_id}", self._handle_get_message_session),
             ("GET", "/health/detailed", self._handle_health_detailed),
             ("GET", "/v1/health", self._handle_health),
             ("GET", "/v1/models", self._handle_models),
@@ -1795,7 +1827,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         ``self._session_db`` (explicit override only), so no profile pins later requests."""
         if self.gateway_runner is not None:
             from gateway.platforms.api_server_store import selected_session_db
-            return selected_session_db(self, home)
+            db = selected_session_db(self, home)
+            if db is not None:
+                return db
         from hermes_state_registry import acquire
         key = str(home)
         with self._session_db_cache_lock:
@@ -1840,7 +1874,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if self.gateway_runner is not None:
             from hermes_constants import get_hermes_home
             from gateway.platforms.api_server_store import selected_session_db
-            return selected_session_db(self, get_hermes_home())
+            db = selected_session_db(self, get_hermes_home())
+            if db is not None:
+                return db
         if self._session_db is not None:
             return self._session_db
         try:
@@ -1856,7 +1892,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if self.gateway_runner is not None:
             from hermes_constants import get_hermes_home
             from gateway.platforms.api_server_store import selected_session_db
-            return selected_session_db(self, get_hermes_home())
+            db = selected_session_db(self, get_hermes_home())
+            if db is not None:
+                return db
         if self._session_db is not None:
             return self._session_db
         try:
@@ -2284,7 +2322,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         model_options: Optional[dict[str, Any]] = None, route: Optional[dict[str, Any]] = None,
         session_model: Optional[str] = None, confirmed_runtime_lock: bool = False,
         room_dispatch: Optional[dict[str, Any]] = None,
-        room_execution_policy: Optional[dict[str, Any]] = None) -> Any:
+        room_execution_policy: Optional[dict[str, Any]] = None,
+        agent_mode: str = "default") -> Any:
         """Create an AIAgent from the gateway runtime config + platform toolsets.
         ``gateway_session_key`` persists across transcripts (memory scope), unlike ``session_id``;
         ``route`` / ``session_model`` are mutually exclusive; ``confirmed_runtime_lock`` beats the
@@ -2323,6 +2362,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             policy = RoomExecutionPolicy.from_mapping(room_execution_policy or {})
             enabled_toolsets = list(policy.enabled_toolsets)
             max_iterations = policy.max_iterations
+        if agent_mode == "direct":
+            enabled_toolsets = []
+            max_iterations = 1
         # Reasoning resolves against the model that actually runs (per-model overrides), so only
         # after the precedence chain settles; an explicit request wins.
         if request_reasoning_config is None:
@@ -2350,6 +2392,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             "memory_manager": self._memory_sessions.checkout(session_id)}
         if request_service_tier is not _REQUEST_OPTION_MISSING:
             agent_kwargs["service_tier"] = request_service_tier
+        if agent_mode == "direct":
+            agent_kwargs["skip_context_files"] = True
+            agent_kwargs["skip_memory"] = True
+            agent_kwargs["skip_background_review"] = True
         agent = AIAgent(**agent_kwargs)
         route_source = (
             "session_model_lock" if confirmed_runtime_lock
@@ -2454,6 +2500,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         """GET /v1/capabilities — the stable, machine-readable API surface for external UIs."""
         runner = getattr(self, "gateway_runner", None)
         features = {
+            "message_api": self._message_api_enabled,
+            "message_api_remote_enabled": self._allow_remote,
+            "message_api_command_execution_enabled": self._message_api_allow_command_execution,
+            "message_api_shared_memory_notes_enabled": self._message_api_shared_memory_notes_enabled,
             "chat_completions": True, "chat_completions_streaming": True,
             "responses_api": True, "responses_streaming": True, "run_submission": True,
             "runs_idempotency": _api_runs._idempotency_capabilities(self, store_type=RunIdempotencyStore),
@@ -4165,7 +4215,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         session_history_delivery: str = "", turn_author: Optional[dict[str, Any]] = None,
         relay_metadata: Optional[dict[str, Any]] = None, notification_category: str = "result",
         resume_unanswered_turn: bool = False, approval_notify_callback=None,
-        approval_session_key: Optional[str] = None, walked_from: Optional[str] = None) -> tuple:
+        approval_session_key: Optional[str] = None, walked_from: Optional[str] = None,
+        agent_mode: str = "default") -> tuple:
         """Create an agent and run one turn in a thread executor -> ``(result, usage)``.
         ``approval_notify_callback`` (with ``approval_session_key``) routes dangerous-command
         approval requests to the caller's stream, keyed like ``/v1/runs`` approvals (#51871).
@@ -4195,7 +4246,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 bind_declared_conversation=bind_declared_conversation, request_id=request_id, run_owner_scope=run_owner_scope,
                 history_from_session=history_from_session, session_history_delivery=session_history_delivery,
                 turn_author=turn_author, resume_unanswered_turn=resume_unanswered_turn, relay_metadata=relay_metadata,
-                approval_notify_callback=approval_notify_callback, approval_session_key=approval_session_key)
+                approval_notify_callback=approval_notify_callback, approval_session_key=approval_session_key, agent_mode=agent_mode)
         loop = asyncio.get_running_loop()
         # ContextVars do not follow run_in_executor threads: capture here, re-enter in _run().
         request_profile = _api_request_profile.get()
@@ -4224,7 +4275,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         reasoning_callback=reasoning_callback, status_callback=status_callback,
                         gateway_session_key=gateway_session_key, requested_model=requested_model,
                         requested_provider=requested_provider, model_options=model_options, route=route,
-                        session_model=session_model, confirmed_runtime_lock=confirmed_runtime_lock)
+                        session_model=session_model, confirmed_runtime_lock=confirmed_runtime_lock,
+                        agent_mode=agent_mode)
                     if agent_ref is not None:
                         agent_ref[0] = agent
                     if resume_unanswered_turn:
@@ -4405,7 +4457,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     # -- BasePlatformAdapter interface ------------------------------------------------
 
     def _api_key_passes_startup_guard(self) -> bool:
-        """Return True when API_SERVER_KEY is present and strong enough to start."""
+        """Require a strong key and an explicit opt-in for non-loopback binding."""
         if not self._api_key:
             logger.error(
                 "[%s] Refusing to start: API_SERVER_KEY is required for the API server, "
@@ -4432,6 +4484,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "(e.g. `openssl rand -hex 32`) and set API_SERVER_KEY "
                 "before starting the API server on %s.",
                 self.name, self._host)
+            return False
+        if is_network_accessible(self._host if self._host is not None else "0.0.0.0") and not self._allow_remote:
+            logger.error(
+                "[%s] Refusing network-accessible bind on %s: set "
+                "platforms.api_server.allow_remote=true to opt in.",
+                self.name, self._host or "dual")
             return False
         return True
 
@@ -4484,7 +4542,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             self._track_background_task(asyncio.create_task(self._sweep_orphaned_runs()))
             # Network-accessible + unsandboxed local terminal backend = host-user RCE surface;
             # warn, don't refuse (the operator may have a firewall / strong key).
-            if is_network_accessible(self._host):
+            if is_network_accessible(self._host if self._host is not None else "0.0.0.0"):
                 _backend = "local"
                 with suppress(Exception):
                     from hermes_cli.config import load_config as _load_cfg

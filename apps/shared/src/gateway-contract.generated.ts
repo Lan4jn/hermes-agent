@@ -1940,6 +1940,45 @@ export interface MachineInfo {
   wsl?: boolean | null
   container?: boolean | null
 }
+export interface MessageKeysListParams {
+  profile?: string | null
+}
+export interface MessageKeysListResult {
+  items?: MessageKeyItem[]
+}
+export interface MessageKeyItem {
+  id: string
+  name: string
+  created_at: string
+}
+export interface MessageKeyCreateParams {
+  profile?: string | null
+  name: string
+}
+export interface MessageKeyCreateResult {
+  id: string
+  name: string
+  created_at: string
+  key: string
+}
+export interface MessageKeyRevokeParams {
+  profile?: string | null
+  id: string
+}
+export interface MessageKeyRevokeResult {
+  ok?: boolean
+  removed?: boolean
+}
+export interface MessageKeysGetPolicyParams {
+  profile?: string | null
+}
+export interface MessageKeysPolicyResult {
+  require_chat_key: boolean
+}
+export interface MessageKeysSetPolicyParams {
+  profile?: string | null
+  require_chat_key: boolean
+}
 /** ``word`` is the token under the cursor (``@`` prefix = context reference); ``cwd`` / ``session_id`` pick the directory the listing resolves against. */
 export interface CompletePathParams {
   profile?: string | null
@@ -6143,6 +6182,16 @@ export interface RpcMethods {
   'mcp.servers.test': { params: McpServerNameParams; result: McpServersTestResult }
   /** Set/clear one author's emoji reaction on a message; returns the row's full reaction list. */
   'message.react': { params: MessageReactParams; result: MessageReactResult }
+  /** Create a new message API key (returns plaintext key once). */
+  'message_keys.create': { params: MessageKeyCreateParams; result: MessageKeyCreateResult }
+  /** Get the require_chat_key enforcement policy for message API. */
+  'message_keys.get_policy': { params: MessageKeysGetPolicyParams; result: MessageKeysPolicyResult }
+  /** List all message API keys for the current profile (metadata only, no plaintext key). */
+  'message_keys.list': { params: MessageKeysListParams; result: MessageKeysListResult }
+  /** Revoke a message API key by ID. */
+  'message_keys.revoke': { params: MessageKeyRevokeParams; result: MessageKeyRevokeResult }
+  /** Set the require_chat_key enforcement policy for message API. */
+  'message_keys.set_policy': { params: MessageKeysSetPolicyParams; result: MessageKeysPolicyResult }
   /** Remove every credential (env keys and OAuth state) for a provider. */
   'model.disconnect': { params: ModelDisconnectParams; result: ModelDisconnectResult }
   /** Provider/model inventory for the picker, layered over the session's live provider when given. */
@@ -6551,6 +6600,11 @@ export const RPC_METHODS = [
   'mcp.servers.status',
   'mcp.servers.test',
   'message.react',
+  'message_keys.create',
+  'message_keys.get_policy',
+  'message_keys.list',
+  'message_keys.revoke',
+  'message_keys.set_policy',
   'model.disconnect',
   'model.options',
   'model.save_key',

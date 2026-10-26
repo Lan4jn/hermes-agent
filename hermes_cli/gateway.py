@@ -3997,24 +3997,29 @@ def _wait_for_gateway_exit(timeout: float = 10.0, force_after: float | None = 5.
     return True
 
 
-def _wait_for_tcp_port_free(host: str, port: int, *, timeout: float = 10.0) -> bool:
+def _wait_for_tcp_port_free(host: str | None, port: int, *, timeout: float = 10.0) -> bool:
     """Wait until nothing accepts TCP connections on host:port.
 
     PID exit is not enough on macOS: api_server disables SO_REUSEADDR, so a restart that wins
     the race logs EADDRINUSE and keeps running with no API. Connection-refused means the
     listener is gone; a timed-out connect is a live listener with a slow accept queue.
     """
+    targets = ("127.0.0.1", "::1") if host is None else (host,)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=0.2):
-                pass
-        except ConnectionRefusedError:
+        busy = False
+        for target in targets:
+            try:
+                with socket.create_connection((target, port), timeout=0.2):
+                    busy = True
+            except ConnectionRefusedError:
+                continue
+            except TimeoutError:
+                busy = True
+            except OSError:
+                continue  # Unreachable address family cannot hold this listener.
+        if not busy:
             return True
-        except TimeoutError:
-            pass  # a slow accept queue is still a live listener
-        except OSError:
-            return True  # unresolvable/unreachable address: nothing to wait for; the bind retry covers it
         time.sleep(0.1)
     return False
 
@@ -5707,4 +5712,3 @@ def _pm_runtime_venv_dir(project_root: Path | None = None) -> Path | None:
 
     venv = selected_venv(root)  # a malformed committed selection raises: fail closed
     return venv if venv.is_dir() else None
-

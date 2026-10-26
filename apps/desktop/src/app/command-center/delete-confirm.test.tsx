@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
 import type { SessionInfo } from '@/hermes'
+import { I18nProvider } from '@/i18n'
 import { $sessions } from '@/store/session'
 
 import { CommandCenterView } from './index'
@@ -42,15 +43,17 @@ const SESSION: SessionInfo = {
   title: 'Precious conversation'
 } as SessionInfo
 
-function renderCommandCenter(onDeleteSession: (id: string) => Promise<void>) {
+function renderCommandCenter(onDeleteSession: (id: string) => Promise<void>, locale?: 'zh' | 'zh-hant' | 'en') {
   return render(
     <MemoryRouter>
-      <CommandCenterView
-        initialSection="sessions"
-        onClose={() => {}}
-        onDeleteSession={onDeleteSession}
-        onOpenSession={() => {}}
-      />
+      <I18nProvider configClient={null} initialLocale={locale ?? 'en'}>
+        <CommandCenterView
+          initialSection="sessions"
+          onClose={() => {}}
+          onDeleteSession={onDeleteSession}
+          onOpenSession={() => {}}
+        />
+      </I18nProvider>
     </MemoryRouter>
   )
 }
@@ -92,5 +95,27 @@ describe('Command Center session delete confirmation (#99410)', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(onDeleteSession).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['zh', '会话', '系统', '用量', '维护'],
+    ['zh-hant', '工作階段', '系統', '使用量', '維護']
+  ] as const)('localizes navigation sections in %s without English fallback', async (locale, sessionsLabel, systemLabel, usageLabel, maintenanceLabel) => {
+    const onDeleteSession = vi.fn(() => Promise.resolve())
+    renderCommandCenter(onDeleteSession, locale)
+
+    const sessionsButtons = await screen.findAllByRole('button', { name: new RegExp(sessionsLabel) })
+    expect(sessionsButtons.length).toBeGreaterThanOrEqual(1)
+
+    const systemButtons = screen.getAllByRole('button', { name: new RegExp(systemLabel) })
+    expect(systemButtons.length).toBeGreaterThanOrEqual(1)
+
+    const usageButtons = screen.getAllByRole('button', { name: new RegExp(usageLabel) })
+    expect(usageButtons.length).toBeGreaterThanOrEqual(1)
+
+    const maintenanceButtons = screen.getAllByRole('button', { name: new RegExp(maintenanceLabel) })
+    expect(maintenanceButtons.length).toBeGreaterThanOrEqual(1)
+
+    expect(screen.queryByRole('button', { name: /^Maintenance$/ })).toBeNull()
   })
 })

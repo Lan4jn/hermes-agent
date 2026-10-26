@@ -41,6 +41,8 @@ except ImportError:
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     gateway_trust_env, BasePlatformAdapter, ExecApprovalPrompt, SendResult,
+    _TEXT_INJECT_EXTENSIONS, SUPPORTED_IMAGE_DOCUMENT_TYPES,
+    SUPPORTED_DOCUMENT_TYPES, is_text_inject_document,
     cache_document_from_bytes_async, cache_image_from_bytes_async,
 )
 from gateway.platforms.event import MessageEvent, MessageType
@@ -820,28 +822,39 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         into the text, drop empty events, remember the QQ chat kind and dispatch."""
         att = await self._process_attachments(attachments)
         text = content
-        voice_transcripts = att["voice_transcripts"]
+        voice_transcripts = att.get("voice_transcripts") or []
+        text_injections = att.get("text_injections") or []
+        document_urls = att.get("document_urls") or []
+        document_media_types = att.get("document_media_types") or []
         if voice_transcripts:
             text = self._append_block(text, "\n".join(voice_transcripts))
-        if att["attachment_info"]:
+        if text_injections:
+            text = self._append_block(text, "\n\n".join(t for t in text_injections if t))
+        if att.get("attachment_info"):
             text = self._append_block(text, att["attachment_info"])
-        image_urls, image_media_types = att["image_urls"], att["image_media_types"]
+        image_urls, image_media_types = att.get("image_urls") or [], att.get("image_media_types") or []
+        media_urls = list(image_urls) + list(document_urls)
+        media_types = list(image_media_types) + list(document_media_types)
         if verbose:
-            logger.info("[%s] After processing: images=%d, voice=%d", self._log_tag, len(image_urls), len(voice_transcripts))
+            logger.info(
+                "[%s] After processing: images=%d, voice=%d, documents=%d",
+                self._log_tag, len(image_urls), len(voice_transcripts), len(document_urls))
 
         quoted = await self._process_quoted_context(d)
         text = self._merge_quote_into(text, quoted["quote_block"])
         if quoted["image_urls"]:
-            image_urls = image_urls + quoted["image_urls"]
-            image_media_types = image_media_types + quoted["image_media_types"]
-        if not text.strip() and not image_urls:
+            media_urls = media_urls + quoted["image_urls"]
+            media_types = media_types + quoted["image_media_types"]
+        if not text.strip() and not media_urls:
             return
+
+        message_type = MessageType.DOCUMENT if document_urls else self._detect_message_type(media_urls, media_types)
 
         self._chat_type_map[chat_id] = qq_chat_type
         event = MessageEvent(
             source=self.build_source(chat_id=chat_id,** source_kwargs), text=text,
-            message_type=self._detect_message_type(image_urls, image_media_types), raw_message=d,
-            message_id=msg_id, media_urls=image_urls, media_types=image_media_types,
+            message_type=message_type, raw_message=d,
+            message_id=msg_id, media_urls=media_urls, media_types=media_types,
             timestamp=self._parse_qq_timestamp(timestamp),
         )
         await self.handle_message(event)
@@ -907,16 +920,38 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         logger.debug("Unknown media content_type '%s', defaulting to TEXT", first_type)
         return MessageType.TEXT
 
-    async def _process_attachments(self, attachments: Any) -> dict[str, Any]:
-        """Process inbound attachments uniformly. Returns ``{"image_urls",
-        "image_media_types", "voice_transcripts", "attachment_info"}`` (cached image
-        paths + MIME types, "[Voice] ..." transcripts, text description of other files)."""
-        image_urls: list[str] = []
-        image_media_types: list[str] = []
-        voice_transcripts: list[str] = []
-        other_attachments: list[str] = []
+    async def _download_and_cache_attachment(
+        self, url: str, content_type: str, original_name: str = "",
+    ) -> Optional[str]:
+        try:
+            return await self._download_and_cache(url, content_type, original_name)
+        except TypeError:
+            return await self._download_and_cache(url, content_type)
 
-        for att in attachments if isinstance(attachments, list) else ():
+    async def _process_attachments(self, attachments: Any) -> Dict[str, Any]:
+        """Process inbound attachments uniformly. Returns ``{"image_urls",
+        "image_media_types", "document_urls", "document_media_types",
+        "voice_transcripts", "text_injections", "attachment_info"}``."""
+        if not isinstance(attachments, list):
+            return {
+                "image_urls": [],
+                "image_media_types": [],
+                "document_urls": [],
+                "document_media_types": [],
+                "voice_transcripts": [],
+                "text_injections": [],
+                "attachment_info": "",
+            }
+
+        image_urls: List[str] = []
+        image_media_types: List[str] = []
+        document_urls: List[str] = []
+        document_media_types: List[str] = []
+        voice_transcripts: List[str] = []
+        text_injections: List[str] = []
+        other_attachments: List[str] = []
+
+        for att in attachments:
             if not isinstance(att, dict):
                 continue
             ct = str(att.get("content_type", "")).strip().lower()
@@ -942,28 +977,87 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
                     voice_transcripts.append("[Voice] [语音识别失败]")
                 continue
 
-            is_image = ct.startswith("image/")
+            guessed_mime = SUPPORTED_IMAGE_DOCUMENT_TYPES.get(Path(filename).suffix.lower(), "")
+            is_image = ct.startswith("image/") or (
+                ct in {"", "file", "application/octet-stream"} and guessed_mime.startswith("image/")
+            )
+            media_type = guessed_mime if is_image and not ct.startswith("image/") else ct
             try:
-                cached_path = await self._download_and_cache(url, ct, filename)
+                cached_path = await self._download_and_cache_attachment(url, media_type, filename)
             except Exception as exc:
                 logger.debug("[%s] Failed to cache %s: %s", self._log_tag, "image" if is_image else "attachment", exc)
                 continue
             if not cached_path:
                 continue
-            if not is_image:
-                label = "video" if ct.startswith("video/") else "file"
-                other_attachments.append(f"[{label}: {filename or ct} ({cached_path})]")
-            elif os.path.isfile(cached_path):
-                image_urls.append(cached_path)
-                image_media_types.append(ct or "image/jpeg")
+
+            if is_image:
+                if os.path.isfile(cached_path):
+                    image_urls.append(cached_path)
+                    image_media_types.append(media_type or "image/jpeg")
+                else:
+                    logger.warning("[%s] Cached image path does not exist: %s", self._log_tag, cached_path)
+                continue
+
+            # Other attachments (video, document, file)
+            display_name = filename or Path(cached_path).name or ct or "attachment"
+            ext = Path(display_name).suffix.lower()
+            if not ext and ct:
+                mime_to_ext = {v: k for k, v in SUPPORTED_DOCUMENT_TYPES.items()}
+                ext = mime_to_ext.get(ct, "")
+
+            if ext in SUPPORTED_DOCUMENT_TYPES:
+                mime_type = SUPPORTED_DOCUMENT_TYPES[ext]
+                document_urls.append(cached_path)
+                document_media_types.append(mime_type)
+                text_injectable = is_text_inject_document(display_name, mime_type)
+                from tools.credential_files import to_agent_visible_cache_path
+                agent_path = to_agent_visible_cache_path(cached_path)
+
+                if text_injectable and os.path.isfile(cached_path):
+                    try:
+                        raw_bytes = Path(cached_path).read_bytes()
+                        max_inline_bytes = 100 * 1024
+                        chunk = raw_bytes[:max_inline_bytes]
+                        text_content = chunk.decode("utf-8")
+                        safe_name = re.sub(r"[^\w.\- ]", "_", display_name)
+                        kind = "Content" if len(raw_bytes) <= max_inline_bytes else "Preview"
+                        if len(raw_bytes) <= max_inline_bytes:
+                            snippet = f"[{kind} of {safe_name} (saved at {agent_path})]:\n{text_content}"
+                        else:
+                            snippet = (
+                                f"[{kind} of {safe_name} (first {max_inline_bytes // 1024}KB only; "
+                                f"full file saved at {agent_path}. Use read_file on that path to inspect the rest.)]:\n"
+                                f"{text_content}"
+                            )
+                        text_injections.append(snippet)
+                        if ct.startswith("text/") or ct.startswith("application/"):
+                            other_attachments.append(f"[Attachment: {display_name}]")
+                        else:
+                            other_attachments.append(f"[file: {display_name} ({agent_path})]")
+                            other_attachments.append(snippet)
+                    except UnicodeDecodeError:
+                        logger.warning(
+                            "[%s] Could not decode QQ text attachment as UTF-8: %s",
+                            self._log_tag, display_name, exc_info=True)
+                        other_attachments.append(f"[file: {display_name} ({agent_path})]")
+                else:
+                    other_attachments.append(f"[file: {display_name} ({agent_path})]")
             else:
-                logger.warning("[%s] Cached image path does not exist: %s", self._log_tag, cached_path)
+                if ct.startswith("video/"):
+                    name = filename or ct or Path(cached_path).name or "video"
+                    other_attachments.append(f"[video: {name} ({cached_path})]")
+                else:
+                    other_attachments.append(f"[file: {display_name} ({cached_path})]")
 
         return {
             "image_urls": image_urls,
             "image_media_types": image_media_types,
+            "document_urls": document_urls,
+            "document_media_types": document_media_types,
             "voice_transcripts": voice_transcripts,
-            "attachment_info": "\n".join(other_attachments)}
+            "text_injections": text_injections,
+            "attachment_info": "\n".join(other_attachments) if other_attachments else "",
+        }
 
     @staticmethod
     def _opt_str(value: Any) -> Optional[str]:

@@ -2,8 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopUpdateStatus, DesktopVersionInfo, HermesConnection } from '@/global'
+import { I18nProvider } from '@/i18n'
 import { en } from '@/i18n/en'
 import { $confirmRequest, settleConfirm } from '@/store/confirm'
+import { zh } from '@/i18n/zh'
+import { zhHant } from '@/i18n/zh-hant'
 import type * as SessionStore from '@/store/session'
 import { $connection } from '@/store/session'
 import type * as UpdatesStore from '@/store/updates'
@@ -200,5 +203,20 @@ describe('AboutSettings', (): void => {
       expect(checkBackendUpdates).toHaveBeenCalledWith({ force: true })
     })
     expect(checkUpdates).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['zh', zh.updates.checkNow, '检查更新'],
+    ['zh-hant', zhHant.updates.checkNow, '檢查更新']
+  ] as const)('localizes update checking in %s without English fallback', (locale, expectedCheckNow, expectedSubstring) => {
+    $connection.set(connection('local'))
+    render(
+      <I18nProvider configClient={null} initialLocale={locale}>
+        <AboutSettings />
+      </I18nProvider>
+    )
+
+    expect(screen.getByRole('button', { name: expectedCheckNow })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.updates.checkNow })).toBeNull()
   })
 })

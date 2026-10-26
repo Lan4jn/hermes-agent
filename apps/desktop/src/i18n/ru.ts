@@ -420,6 +420,7 @@ export const ruOverrides = {
       keybinds: 'Горячие клавиши',
       keysTools: 'Инструменты',
       keysSettings: 'Настройки',
+      keysMessage: 'Ключи сообщений',
       mcp: 'MCP',
       archivedChats: 'Архив чатов',
       sessions: 'Сеансы',

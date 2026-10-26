@@ -829,6 +829,164 @@ class TestProcessQuotedContext:
 
 
 
+class TestQQDocumentIngestion:
+    def _make_adapter(self):
+        from plugins.platforms.qqbot.adapter import QQAdapter
+        return QQAdapter(_make_config(app_id="a", client_secret="b"))
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_supported_text_document_injects_content(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "notes.txt"
+        doc_path.write_text("hello from qq", encoding="utf-8")
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "text/plain",
+                "url": "https://qq-cdn/notes.txt",
+                "filename": "notes.txt",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["document_media_types"] == ["text/plain"]
+        assert result["attachment_info"] == "[Attachment: notes.txt]"
+        assert result["text_injections"]
+        assert "hello from qq" in result["text_injections"][0]
+        assert str(doc_path) in result["text_injections"][0]
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_large_text_document_injects_preview_and_path(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "big.txt"
+        content = ("hello from qq\n" * 12000).encode("utf-8")
+        doc_path.write_bytes(content)
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "text/plain",
+                "url": "https://qq-cdn/big.txt",
+                "filename": "big.txt",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["text_injections"]
+        preview = result["text_injections"][0]
+        assert "big.txt" in preview
+        assert str(doc_path) in preview
+        assert "read_file" in preview
+        assert "hello from qq" in preview
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_conf_file_with_generic_content_type_is_text_document(self, tmp_path):
+        adapter = self._make_adapter()
+        doc_path = tmp_path / "sockd.conf"
+        doc_path.write_text("listen = 0.0.0.0:7890", encoding="utf-8")
+
+        async def fake_download(url, content_type):
+            return str(doc_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "file",
+                "url": "https://qq-cdn/sockd.conf",
+                "filename": "sockd.conf",
+            }
+        ])
+
+        assert result["document_urls"] == [str(doc_path)]
+        assert result["document_media_types"] == ["text/plain"]
+        assert result["text_injections"]
+        assert "sockd.conf" in result["text_injections"][0]
+        assert "listen = 0.0.0.0:7890" in result["text_injections"][0]
+
+    @pytest.mark.asyncio
+    async def test_process_attachments_empty_content_type_jpg_still_treated_as_image(self, tmp_path):
+        adapter = self._make_adapter()
+        img_path = tmp_path / "photo.jpg"
+        img_path.write_bytes(b"\xff\xd8\xff\xd9")
+
+        async def fake_download(url, content_type):
+            return str(img_path)
+
+        adapter._download_and_cache = fake_download  # type: ignore[assignment]
+        result = await adapter._process_attachments([
+            {
+                "content_type": "",
+                "url": "https://qq-cdn/photo",
+                "filename": "photo.jpg",
+            }
+        ])
+
+        assert result["image_urls"] == [str(img_path)]
+        assert result["image_media_types"] == ["image/jpeg"]
+        assert result["document_urls"] == []
+        assert result["attachment_info"] == ""
+
+    @pytest.mark.asyncio
+    async def test_c2c_document_event_reaches_agent_as_document(self):
+        from gateway.platforms.base import MessageType
+
+        adapter = self._make_adapter()
+        seen = []
+
+        async def fake_handle(event):
+            seen.append(event)
+
+        async def fake_process(_atts):
+            return {
+                "image_urls": [],
+                "image_media_types": [],
+                "document_urls": ["/tmp/qq-report.pdf"],
+                "document_media_types": ["application/pdf"],
+                "voice_transcripts": [],
+                "text_injections": [],
+                "attachment_info": "[Attachment: report.pdf]",
+            }
+
+        adapter.handle_message = fake_handle  # type: ignore[assignment]
+        adapter._process_attachments = fake_process  # type: ignore[assignment]
+
+        await adapter._handle_c2c_message(
+            {
+                "attachments": [
+                    {
+                        "content_type": "application/pdf",
+                        "url": "https://qq-cdn/report.pdf",
+                        "filename": "report.pdf",
+                    }
+                ]
+            },
+            msg_id="m1",
+            content="",
+            author={"user_openid": "user-1"},
+            timestamp="1710000000",
+        )
+
+        assert len(seen) == 1
+        event = seen[0]
+        assert event.message_type == MessageType.DOCUMENT
+        assert event.media_urls == ["/tmp/qq-report.pdf"]
+        assert event.media_types == ["application/pdf"]
+        assert "report.pdf" in event.text
+
+
+class TestMergeQuoteInto:
+    def test_empty_quote_returns_original(self):
+        from plugins.platforms.qqbot.adapter import QQAdapter
+        assert QQAdapter._merge_quote_into("hello", "") == "hello"
+
+
 # ---------------------------------------------------------------------------
 # Gateway-contract approval UX — send_exec_approval + default dispatcher
 # ---------------------------------------------------------------------------
@@ -1055,6 +1213,77 @@ class TestProfileNamespaceApprovalAuthz:
 
 
 
+class TestSendExecApproval:
+    """Verify the gateway contract: QQAdapter.send_exec_approval(...)."""
+
+    def _make_adapter(self):
+        from plugins.platforms.qqbot.adapter import QQAdapter
+        return QQAdapter(_make_config(app_id="a", client_secret="b"))
+
+    def test_supports_exec_approval_buttons(self):
+        from plugins.platforms.qqbot.adapter import QQAdapter
+        from gateway.run_turn_runner import _renders_exec_approval_buttons
+
+        assert QQAdapter.supports_exec_approval_buttons() is True
+        assert _renders_exec_approval_buttons(QQAdapter) is True
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_send_approval_request(self):
+        adapter = self._make_adapter()
+
+        calls = []
+
+        async def fake_send_approval(chat_id, req, reply_to=None):
+            from gateway.platforms.base import SendResult
+            calls.append({"chat_id": chat_id, "req": req, "reply_to": reply_to})
+            return SendResult(success=True, message_id="m-1")
+
+        adapter.send_approval_request = fake_send_approval  # type: ignore[assignment]
+        # Seed last-msg-id so the reply_to path is exercised.
+        adapter._last_msg_id["user-1"] = "inbound-42"
+
+        result = await adapter.send_exec_approval(
+            chat_id="user-1",
+            command="rm -rf /tmp/demo",
+            session_key="sess:abc",
+            description="delete temp dir",
+        )
+        assert result.success
+        assert len(calls) == 1
+        req = calls[0]["req"]
+        assert req.session_key == "sess:abc"
+        assert req.command_preview == "rm -rf /tmp/demo"
+        assert req.description == "delete temp dir"
+        assert req.allow_permanent is True
+        assert calls[0]["reply_to"] == "inbound-42"
+
+    @pytest.mark.asyncio
+    async def test_smart_deny_disables_permanent_button(self):
+        adapter = self._make_adapter()
+        calls = []
+
+        async def fake_send_approval(chat_id, req, reply_to=None):
+            from gateway.platforms.base import SendResult
+            calls.append({"chat_id": chat_id, "req": req, "reply_to": reply_to})
+            return SendResult(success=True, message_id="m-2")
+
+        adapter.send_approval_request = fake_send_approval  # type: ignore[assignment]
+
+        result = await adapter.send_exec_approval(
+            chat_id="user-1",
+            command="git reset --hard",
+            session_key="sess:smart",
+            description="dangerous reset",
+            smart_denied=True,
+            allow_permanent=True,
+        )
+        assert result.success
+        assert len(calls) == 1
+        req = calls[0]["req"]
+        assert req.allow_permanent is False
+        assert "Owner override applies to this one operation only." in req.description
+
+
 class TestSendUpdatePrompt:
     """Verify the cross-adapter send_update_prompt signature + behaviour."""
 
@@ -1168,6 +1397,75 @@ class TestProcessAttachmentsPathExposure:
         assert "my_video.mp4" in info
         assert "/tmp/cache/video_abc123.mp4" in info
 
+    @pytest.mark.asyncio
+    async def test_image_filename_recovers_missing_image_mime(self, tmp_path):
+        adapter = self._make_adapter()
+        image = tmp_path / "photo.png"
+        image.write_bytes(b"png")
+        downloaded = []
+
+        async def fake_download(url, ct, original_name=""):
+            downloaded.append(ct)
+            return str(image)
+
+        adapter._download_and_cache = fake_download
+        result = await adapter._process_attachments([{
+            "content_type": "file", "url": "https://example.test/photo", "filename": "photo.png",
+        }])
+        assert downloaded == ["image/png"]
+        assert result["image_urls"] == [str(image)]
+        assert result["image_media_types"] == ["image/png"]
+
+    @pytest.mark.asyncio
+    async def test_generic_svg_attachment_is_not_sent_to_vision(self, tmp_path):
+        adapter = self._make_adapter()
+        document = tmp_path / "vector.svg"
+        document.write_text("<svg/>", encoding="utf-8")
+
+        async def fake_download(url, ct, original_name=""):
+            return str(document)
+
+        adapter._download_and_cache = fake_download
+        result = await adapter._process_attachments([{
+            "content_type": "file", "url": "https://example.test/file", "filename": "vector.svg",
+        }])
+        assert result["image_urls"] == []
+        assert str(document) in result["attachment_info"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("filename", ["settings.yml", "schema.sql", "app.properties"])
+    async def test_text_attachment_inlines_bounded_preview(self, tmp_path, filename):
+        adapter = self._make_adapter()
+        document = tmp_path / filename
+        document.write_text("configuration value", encoding="utf-8")
+
+        async def fake_download(url, ct, original_name=""):
+            return str(document)
+
+        adapter._download_and_cache = fake_download
+        result = await adapter._process_attachments([{
+            "content_type": "file", "url": "https://example.test/file", "filename": filename,
+        }])
+        assert filename in result["attachment_info"]
+        assert "configuration value" in result["attachment_info"]
+        assert str(document) in result["attachment_info"]
+
+    @pytest.mark.asyncio
+    async def test_text_attachment_preview_does_not_read_past_limit(self, tmp_path):
+        adapter = self._make_adapter()
+        document = tmp_path / "large.sql"
+        document.write_bytes(b"x" * (100 * 1024) + b"SECRET_AFTER_LIMIT")
+
+        async def fake_download(url, ct, original_name=""):
+            return str(document)
+
+        adapter._download_and_cache = fake_download
+        result = await adapter._process_attachments([{
+            "content_type": "file", "url": "https://example.test/file", "filename": "large.sql",
+        }])
+        assert "Preview" in result["attachment_info"]
+        assert "SECRET_AFTER_LIMIT" not in result["attachment_info"]
+
 
 
 
@@ -1238,6 +1536,115 @@ class TestOp9InvalidSession:
 
 
 
+class TestCloseCodeClassification:
+    def _make_adapter(self):
+        from plugins.platforms.qqbot.adapter import QQAdapter
+        return QQAdapter(_make_config(app_id="a", client_secret="b"))
+
+    def test_4009_preserves_session(self):
+        """4009 (connection timeout) should NOT clear the session."""
+        adapter = self._make_adapter()
+        adapter._session_id = "sess_to_keep"
+        adapter._last_seq = 50
+
+        session_clear_codes = {
+            4006, 4007, 4900, 4901, 4902, 4903,
+            4904, 4905, 4906, 4907, 4908, 4909,
+            4910, 4911, 4912, 4913,
+        }
+        assert 4009 not in session_clear_codes
+
+
+class TestQQBotInboundAndLeaseTimeoutRegression:
+    """Regression tests for QQBot inbound message preparation and TurnLeaseTimeoutError handling."""
+
+    @pytest.mark.asyncio
+    async def test_prepare_inbound_message_text_shared_session_no_name_error(self):
+        from gateway.run import GatewayRunner
+        from gateway.config import GatewayConfig
+        from gateway.platforms.event import MessageEvent
+        from gateway.session import SessionSource, Platform
+
+        config = GatewayConfig()
+        config.group_sessions_per_user = False
+        runner = GatewayRunner(config)
+        runner.session_store = mock.AsyncMock()
+        runner._session_sources = {}
+
+        source = SessionSource(
+            platform=Platform.QQBOT,
+            chat_id="group:123",
+            user_id="user:456",
+            user_name="test_user\ninline",
+            chat_type="group",
+            thread_id=None,
+        )
+
+        event = MessageEvent(
+            text="hello qqbot",
+            source=source,
+            message_id="msg-1",
+        )
+
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+            session_key="agent:main:qqbot:group:123",
+        )
+        assert result is not None
+        assert "hello qqbot" in result
+        assert "test_user" in result
+        assert "\n" not in result.split("]")[0]
+
+    @pytest.mark.asyncio
+    async def test_handle_message_turn_lease_timeout_returns_retry_message_no_name_error(self):
+        from gateway.run import GatewayRunner
+        from gateway.config import GatewayConfig
+        from gateway.platforms.event import MessageEvent
+        from gateway.session import SessionSource, Platform
+        from gateway.turn_lease import TurnLeaseTimeoutError
+
+        config = GatewayConfig()
+        runner = GatewayRunner(config)
+        runner.adapters = {}
+        runner._running_agents = {}
+        runner._running_agents_ts = {}
+        runner._pending_messages = {}
+        runner._pending_approvals = {}
+        runner._is_user_authorized = lambda _source: True
+        runner._session_db = mock.MagicMock()
+        runner.session_store = mock.MagicMock()
+        runner.session_store.has_platform_message_id.return_value = False
+        runner.session_store.update_session = mock.MagicMock()
+        runner._persist_active_agents = mock.MagicMock()
+        runner._clear_durable_active_turn = mock.AsyncMock()
+
+        source = SessionSource(
+            platform=Platform.QQBOT,
+            chat_id="user:123",
+            user_id="user:123",
+            user_name="user",
+            chat_type="dm",
+            thread_id=None,
+        )
+
+        event = MessageEvent(
+            text="concurrent message",
+            source=source,
+            message_id="msg-2",
+        )
+
+        async def _fake_handle(*args, **kwargs):
+            raise TurnLeaseTimeoutError("session-lease-id", owner_key="key-1", generation=1, wait_seconds=5.0)
+
+        with mock.patch.object(runner, "_handle_message_with_agent", side_effect=_fake_handle):
+            reply = await runner._handle_message(event)
+            assert reply is not None
+            assert "Another turn is still running" in reply
+            assert "protect the transcript" in reply
+
+
 class TestReadEventsClosedWsGuard:
     """Regression: a closed-but-non-None ws must raise on entry, not return
     normally, so _listen_loop goes through reconnect/backoff instead of
@@ -1253,4 +1660,3 @@ class TestReadEventsClosedWsGuard:
         adapter._ws = SimpleNamespace(closed=True)
         with pytest.raises(RuntimeError):
             asyncio.run(adapter._read_events())
-

@@ -127,18 +127,21 @@ vi.mock("@/contexts/usePageHeader", () => ({
 vi.mock("@/contexts/useProfileScope", () => ({
   useProfileScope: () => ({ profile: "" }),
 }));
+import { en } from "@/i18n/en";
+import { zh } from "@/i18n/zh";
+import { zhHant } from "@/i18n/zh-hant";
+import type { Translations } from "@/i18n/types";
+
+const currentI18nTranslations: { current: Translations } = {
+  current: en,
+};
+
 vi.mock("@/themes", () => ({
   useTheme: () => ({ theme: { terminalBackground: "#000000" } }),
 }));
 vi.mock("@/i18n", () => ({
   useI18n: () => ({
-    t: {
-      app: {
-        closeModelTools: "Close model tools",
-        modelToolsSheetSubtitle: "Tools",
-        modelToolsSheetTitle: "Model",
-      },
-    },
+    t: currentI18nTranslations.current,
   }),
 }));
 vi.mock("@/lib/dashboard-auth-reload", () => ({
@@ -213,6 +216,7 @@ async function render(ui: ReactNode) {
 }
 
 beforeEach(() => {
+  currentI18nTranslations.current = en;
   FakeWebSocket.instances = [];
   webglInstances.length = 0;
   maybeReloadForLoopbackWsAuthFailure.mockClear();
@@ -532,6 +536,29 @@ describe("ChatPage", () => {
     const labels = Array.from(container.querySelectorAll("button")).map((b) => b.textContent?.trim());
     expect(labels).toContain("Start new session");
     expect(labels).toContain("Open logs");
+  });
+
+  it.each([
+    ["zh", "开始新会话", "查看日志"],
+    ["zh-hant", "開始新會話", "查看日誌"],
+  ])("offers localized actions when agent ends in %s", async (locale, startText, logsText) => {
+    currentI18nTranslations.current = locale === "zh" ? zh : zhHant;
+    const { default: ChatPage } = await import("./ChatPage");
+    await render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <ChatPage isActive />
+      </MemoryRouter>,
+    );
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+
+    await act(async () => {
+      FakeWebSocket.instances[0].onclose?.({ code: 4410, reason: "", wasClean: true });
+    });
+
+    const labels = Array.from(container.querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(labels).toContain(startText);
+    expect(labels).toContain(logsText);
+    expect(labels).not.toContain("Start new session");
   });
 
   it("stops retrying after the ladder is spent and offers Check server status", async () => {

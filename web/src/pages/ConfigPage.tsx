@@ -35,7 +35,9 @@ import {
   Shield,
   FileOutput,
   RefreshCw,
+  KeyRound,
 } from "lucide-react";
+import { MessageKeysSection } from "./Config/components/MessageKeysSection";
 import { api } from "@/lib/api";
 import { getNestedValue, setNestedValue } from "@/lib/nested";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
@@ -85,6 +87,7 @@ const CATEGORY_ICONS: Record<
   tool_loop_guardrails: Shield,
   tool_output: FileOutput,
   updates: RefreshCw,
+  message_keys: KeyRound,
 };
 
 function CategoryIcon({
@@ -157,6 +160,7 @@ export default function ConfigPage() {
   }, [config, schema, searchQuery, setEnd, t.common.clear, t.common.search]);
 
   function prettyCategoryName(cat: string): string {
+    if (cat === "message_keys") return "Message API Keys";
     const key = cat as keyof typeof t.config.categories;
     if (t.config.categories[key]) return t.config.categories[key];
     return cat.charAt(0).toUpperCase() + cat.slice(1);
@@ -232,7 +236,7 @@ export default function ConfigPage() {
     ];
     const ordered = categoryOrder.filter((c) => allCats.includes(c));
     const extra = allCats.filter((c) => !categoryOrder.includes(c)).sort();
-    return [...ordered, ...extra];
+    return [...ordered, ...extra, "message_keys"];
   }, [schema, categoryOrder]);
 
   /* ---- Category field counts ---- */
@@ -629,6 +633,8 @@ export default function ConfigPage() {
                   )}
                 </CardContent>
               </Card>
+            ) : activeCategory === "message_keys" ? (
+              <MessageKeysSection />
             ) : (
               /* Active category */
               <Card>

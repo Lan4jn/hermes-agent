@@ -190,6 +190,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("codex-runtime", "Toggle codex app-server runtime for OpenAI/Codex models",
                "Configuration", aliases=("codex_runtime",), args_hint="[auto|codex_app_server]",
                busy_policy="reject", busy_handler="codex-runtime"),
+    CommandDef("gquota", "Show Google Gemini Code Assist quota usage", "Info",
+               cli_only=True),
     CommandDef("personality", "Set a predefined personality", "Configuration",
                args_hint="[name]", argument_mode="options"),
     CommandDef("statusbar", "Toggle the context/model status bar", "Configuration",

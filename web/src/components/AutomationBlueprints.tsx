@@ -11,6 +11,8 @@ import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { Toast } from "@nous-research/ui/ui/components/toast";
 import { api } from "@/lib/api";
 import type { AutomationBlueprint, AutomationBlueprintField } from "@/lib/automation-blueprints";
+import { useI18n } from "@/i18n";
+import { blueprintsEn } from "@/i18n/pagesEn";
 import { cn, themedBody } from "@/lib/utils";
 import { errorMessage } from "@/lib/api-error";
 
@@ -78,6 +80,8 @@ function BlueprintCard({
   showToast: (message: string, type: "error" | "success") => void;
   onCreated?: () => void;
 }) {
+  const { t } = useI18n();
+  const text = t.blueprints ?? blueprintsEn;
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(blueprint));
   const [submitting, setSubmitting] = useState(false);
@@ -128,7 +132,7 @@ function BlueprintCard({
             size="sm"
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Cancel" : "Set up"}
+            {open ? t.common.cancel : text.useBlueprint}
           </Button>
         </div>
 
@@ -158,7 +162,7 @@ function BlueprintCard({
                 disabled={submitting}
                 prefix={submitting ? <Spinner /> : <Clock />}
               >
-                Schedule it
+                {t.cron.schedule}
               </Button>
             </div>
           </div>
@@ -175,6 +179,8 @@ function BlueprintCard({
  * via the same create_job path as everything else.
  */
 export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprintsProps) {
+  const { t } = useI18n();
+  const text = t.blueprints ?? blueprintsEn;
   const { toast, showToast } = useToast();
   const [blueprints, setBlueprints] = useState<AutomationBlueprint[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -198,17 +204,17 @@ export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprint
   }, [profile]);
 
   if (loadError) {
-    return <p className="text-sm text-red-500">Couldn't load blueprints: {loadError}</p>;
+    return <p className="text-sm text-red-500">{text.loadError || "Couldn't load blueprints"}: {loadError}</p>;
   }
   if (blueprints === null) {
     return (
       <div className="flex items-center gap-2 opacity-70">
-        <Spinner className="h-4 w-4" /> Loading blueprints…
+        <Spinner className="h-4 w-4" /> {text.loadingBlueprints || "Loading blueprints…"}
       </div>
     );
   }
   if (blueprints.length === 0) {
-    return <p className="opacity-70">No automation blueprints available.</p>;
+    return <p className="opacity-70">{text.noBlueprints || "No automation blueprints available."}</p>;
   }
 
   return (

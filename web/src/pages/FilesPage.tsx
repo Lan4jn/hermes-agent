@@ -36,6 +36,8 @@ import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
 import type { ManagedFileEntry, ManagedFilesResponse } from "@/lib/api";
+import { useI18n } from "@/i18n";
+import { filesEn } from "@/i18n/pagesEn";
 import { PluginSlot } from "@/plugins";
 import { errorMessage } from "@/lib/api-error";
 
@@ -78,6 +80,8 @@ function transferHasFiles(event: ReactDragEvent<HTMLElement>): boolean {
 }
 
 export default function FilesPage() {
+  const { t } = useI18n();
+  const text = t.files ?? filesEn;
   const { toast, showToast } = useToast();
   const { setAfterTitle, setEnd } = usePageHeader();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -139,7 +143,7 @@ export default function FilesPage() {
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          aria-label="Refresh files"
+          aria-label={text.refreshFiles || "Refresh files"}
         >
           {loading ? <Spinner /> : <RefreshCw />}
         </Button>
@@ -149,7 +153,7 @@ export default function FilesPage() {
       setAfterTitle(null);
       setEnd(null);
     };
-  }, [headerPath, load, loading, setAfterTitle, setEnd]);
+  }, [headerPath, load, loading, setAfterTitle, setEnd, text.refreshFiles]);
 
   const openDirectory = (entry: ManagedFileEntry) => {
     if (entry.is_directory) {
@@ -286,12 +290,12 @@ export default function FilesPage() {
             <Input
               value={pathInput}
               onChange={(event) => setPathInput(event.target.value)}
-              aria-label="Path"
-              placeholder="Path"
+              aria-label={text.path || "Path"}
+              placeholder={text.path || "Path"}
               className="h-9 min-w-0 flex-1 font-mono"
             />
             <Button type="submit" size="sm" outlined className="uppercase">
-              Go
+              {text.go || "Go"}
             </Button>
           </form>
         ) : (
@@ -309,7 +313,7 @@ export default function FilesPage() {
             className="uppercase"
             prefix={uploading ? <Spinner /> : <Upload />}
           >
-            Upload
+            {text.uploadFiles}
           </Button>
           <Button
             type="button"
@@ -320,7 +324,7 @@ export default function FilesPage() {
             className="uppercase"
             prefix={<FolderPlus />}
           >
-            Create
+            {text.newFolder || text.create}
           </Button>
         </div>
       </div>
@@ -333,7 +337,7 @@ export default function FilesPage() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         disabled={!canUpload}
-        aria-label="Upload files"
+        aria-label={text.uploadFiles || "Upload files"}
         className={`flex min-h-20 w-full min-w-0 items-center justify-between gap-4 border border-dashed px-4 py-3 text-left transition ${
           draggingFiles
             ? "border-primary bg-primary/10 text-foreground"
@@ -346,7 +350,7 @@ export default function FilesPage() {
           </span>
           <span className="min-w-0">
             <span className="block text-sm font-semibold uppercase tracking-[0.08em] text-foreground">
-              {uploading ? "Uploading" : draggingFiles ? "Release to upload" : "Drop files here"}
+              {uploading ? t.common.loading : text.dragFilesHint}
             </span>
             <span className="block truncate font-mono text-xs text-text-secondary" title={activePath}>
               {activePath || "Loading"}
@@ -354,7 +358,7 @@ export default function FilesPage() {
           </span>
         </span>
         <span className="hidden shrink-0 text-xs font-semibold uppercase tracking-[0.08em] text-text-tertiary sm:block">
-          Choose files
+          {text.chooseFiles}
         </span>
       </button>
 
@@ -367,10 +371,10 @@ export default function FilesPage() {
           )}
 
           <div className="grid min-w-[42rem] grid-cols-[minmax(12rem,1fr)_7rem_10rem_5.5rem] items-center gap-3 border-b border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-text-tertiary">
-            <span>Name</span>
-            <span>Size</span>
-            <span>Modified</span>
-            <span className="text-right">Actions</span>
+            <span>{text.name}</span>
+            <span>{text.size}</span>
+            <span>{text.modified}</span>
+            <span className="text-right">{text.actions}</span>
           </div>
 
           {listing?.parent && (
@@ -392,10 +396,10 @@ export default function FilesPage() {
           {loading && !listing ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
               <Spinner />
-              Loading files...
+              {text.loadingFiles}
             </div>
           ) : listing && listing.entries.length === 0 ? (
-            <div className="py-12 text-center text-sm text-muted-foreground">No files</div>
+            <div className="py-12 text-center text-sm text-muted-foreground">{text.emptyDirectory}</div>
           ) : (
             listing?.entries.map((entry) => (
               <div
@@ -481,7 +485,7 @@ export default function FilesPage() {
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Create folder</DialogTitle>
+            <DialogTitle>{text.createFolder}</DialogTitle>
             <DialogDescription>
               Target: {activePath || "Loading"}
             </DialogDescription>
@@ -494,7 +498,7 @@ export default function FilesPage() {
               onKeyDown={(event) => {
                 if (event.key === "Enter") void createDirectory();
               }}
-              placeholder="Folder name"
+              placeholder={text.folderName}
               disabled={creating}
             />
           </div>
@@ -508,7 +512,7 @@ export default function FilesPage() {
               }}
               disabled={creating}
             >
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               type="button"
@@ -516,7 +520,7 @@ export default function FilesPage() {
               disabled={creating}
               prefix={creating ? <Spinner /> : <FolderPlus />}
             >
-              Create
+              {text.create}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -527,11 +531,11 @@ export default function FilesPage() {
         loading={deleting}
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => void confirmDelete()}
-        title={pendingDelete ? `Delete ${pendingDelete.name}?` : "Delete item?"}
+        title={pendingDelete ? text.confirmDelete(pendingDelete.name) : text.deleteFile}
         description={
           pendingDelete?.is_directory
-            ? "This removes the folder and everything inside it."
-            : "This removes the file."
+            ? text.deleteFolder
+            : text.deleteFile
         }
       />
     </div>

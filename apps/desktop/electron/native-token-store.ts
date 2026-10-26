@@ -32,8 +32,8 @@ export interface StoredTokenSecret {
  */
 export interface NativeTokenStoreIo {
   /**
-   * Encrypt one plaintext blob. main.ts passes the strict safeStorage helper,
-   * which THROWS when the OS keychain is unavailable — that must stay loud.
+   * Encode one plaintext blob using Desktop's configured secret-storage policy.
+   * With safeStorage enabled, an unusable OS keychain must fail loudly.
    * A `null` return is treated as the same authoritative failure: the caller
    * throws rather than persisting an empty entry over good tokens.
    */
@@ -48,20 +48,25 @@ export interface NativeTokenStoreIo {
 }
 
 /**
- * baseUrl → encrypted payload. A missing, unreadable, or hand-mangled store
- * reads as empty rather than throwing: a failed *read* falls to the next rung.
+ * Startup loads tolerate unavailable or hand-mangled stores. Mutations must
+ * distinguish a truly missing file (ENOENT) from unknown state, otherwise
+ * logout can silently leave credentials behind or saves erase another gateway.
  *
  * Arrays are rejected alongside every other non-object shape: assigning
  * store[baseUrl] on an array would set a non-index property, which
  * JSON.stringify drops on the way back out — the write would look like it
  * succeeded and the tokens would be gone on the next launch.
  */
-function readStore(io: NativeTokenStoreIo): Record<string, any> {
+function readStore(io: NativeTokenStoreIo, forMutation = false): Record<string, any> {
   try {
     const parsed = JSON.parse(io.readStoreText())
 
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch {
+  } catch (error) {
+    if (forMutation && (error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      throw new Error('Remote login credentials could not be read. No credential changes were saved; check Desktop storage permissions and try again.')
+    }
+
     return {}
   }
 }
@@ -96,13 +101,12 @@ function redactGatewayUrl(baseUrl: string): string {
  * into whatever other gateways are already stored.
  */
 export function persistNativeTokenSet(baseUrl: string, tokens: NativeTokenSet | null, io: NativeTokenStoreIo): void {
-  const store = readStore(io)
+  const store = readStore(io, true)
 
   if (tokens) {
-    // Encrypt the whole set as one blob so the refresh token never lands in
-    // plaintext on disk. Deliberately outside the try below: an unusable
-    // keychain is an authoritative write failure and must surface to the
-    // caller, not be logged away as if the tokens were saved.
+    // Encode the whole set as one policy-controlled blob. Deliberately outside
+    // the write try below: an unusable keychain is an authoritative failure and
+    // must surface rather than being logged as if the tokens were saved.
     const secret = io.encrypt(JSON.stringify(tokens))
 
     if (!secret) {
@@ -115,15 +119,24 @@ export function persistNativeTokenSet(baseUrl: string, tokens: NativeTokenSet | 
 
     store[baseUrl] = secret
   } else {
+    if (!Object.hasOwn(store, baseUrl)) {
+      return
+    }
+
     delete store[baseUrl]
   }
 
   try {
     io.writeStoreText(JSON.stringify(store))
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
+  } catch {
+    // A login/refresh cannot claim restart durability when the write failed.
+    // Never expose the filesystem error: injected paths may contain secrets.
+    const message = tokens
+      ? 'Remote login credentials could not be saved. Check Desktop storage permissions and try again.'
+      : 'Remote login credentials could not be removed. Saved credentials remain; check Desktop storage permissions and try again.'
 
-    io.rememberLog?.(`[native-oauth] failed to persist tokens: ${detail}`)
+    io.rememberLog?.(`[native-oauth] ${message}`)
+    throw new Error(message)
   }
 }
 

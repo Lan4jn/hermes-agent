@@ -276,4 +276,3 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
 if (isMain(import.meta.url)) {
   main()
 }
-

@@ -28,7 +28,7 @@ from hermes_cli.secret_prompt import masked_secret_prompt
 
 
 # Providers that support OAuth login in addition to API keys.
-_OAUTH_CAPABLE_PROVIDERS = {"anthropic", "nous", "openai-codex", "xai-oauth", "qwen-oauth", "minimax-oauth", "openrouter"}
+_OAUTH_CAPABLE_PROVIDERS = {"anthropic", "nous", "openai-codex", "xai-oauth", "qwen-oauth", "google-gemini-cli", "minimax-oauth", "openrouter"}
 # ...and default to it when ``--type`` is omitted. OpenRouter stays API-key-first: the documented
 # ``hermes auth add openrouter --api-key sk-or-...`` must keep working with no ``--type``.
 _OAUTH_DEFAULT_PROVIDERS = _OAUTH_CAPABLE_PROVIDERS - {"openrouter"}
@@ -82,7 +82,8 @@ def _resolve_custom_provider_input(raw: str) -> str | None:
 
 _PROVIDER_ALIASES = {
     "or": "openrouter", "open-router": "openrouter", "grok-oauth": "xai-oauth",
-    "xai-oauth": "xai-oauth", "x-ai-oauth": "xai-oauth", "xai-grok-oauth": "xai-oauth"}
+    "xai-oauth": "xai-oauth", "x-ai-oauth": "xai-oauth", "xai-grok-oauth": "xai-oauth",
+    "gemini-cli": "google-gemini-cli", "gemini-oauth": "google-gemini-cli"}
 
 
 def _normalize_provider(provider: str) -> str:
@@ -216,6 +217,15 @@ def _qwen_oauth_login(args) -> dict:
     return creds
 
 
+def _google_gemini_cli_oauth_login(args) -> dict:
+    from agent.google_oauth import run_gemini_oauth_login_pure
+    from hermes_cli.auth_gemini import _mark_google_gemini_cli_active
+
+    creds = run_gemini_oauth_login_pure()
+    _mark_google_gemini_cli_active(creds)
+    return creds
+
+
 @dataclass(frozen=True)
 class _OAuthAddSpec:
     """Per-provider parameters for the generic ``hermes auth add <provider> --type oauth`` path."""
@@ -277,6 +287,16 @@ _OAUTH_ADD_SPECS: dict[str, _OAuthAddSpec] = {
         token=lambda creds: creds["api_key"],
         source=f"{SOURCE_MANUAL}:qwen_cli",
         fields=lambda creds, provider: {"base_url": creds.get("base_url")}),
+    "google-gemini-cli": _OAuthAddSpec(
+        login=lambda args: _google_gemini_cli_oauth_login(args),
+        token=lambda creds: creds.get("access_token", ""),
+        source=f"{SOURCE_MANUAL}:google_oauth",
+        fields=lambda creds, provider: {
+            "refresh_token": creds.get("refresh_token"),
+            "base_url": creds.get("base_url"),
+            "email": creds.get("email"),
+            "project_id": creds.get("project_id"),
+        }),
     "minimax-oauth": _OAuthAddSpec(
         login=lambda args: auth_mod._minimax_oauth_login(
             open_browser=not getattr(args, "no_browser", False),

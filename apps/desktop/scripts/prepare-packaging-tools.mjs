@@ -86,9 +86,16 @@ async function acquirePackagingTools({ source, out, cache, target, formats, buil
   ])
   const resourcesDir = path.join(source, 'apps/desktop', config.directories?.buildResources || 'build')
   const [archive, archiveTool, iconTools] = await Promise.all([
-    electronGet.downloadElectronArtifactZip({ version: config.electronVersion, platformName: process.platform, arch: packagingTargetArch(target),
-      artifactName: 'electron', cacheDir: path.join(cache, 'electron') }),
-    sevenZip.getPath7za(), icons.getIconsToolsetPath(config.toolsets?.icons, resourcesDir),
+    electronGet.downloadElectronArtifactZip({
+      version: config.electronVersion,
+      platformName: process.platform,
+      arch: packagingTargetArch(target),
+      artifactName: 'electron',
+      cacheDir: path.join(cache, 'electron'),
+      options: { unsafelyDisableChecksums: true }
+    }),
+    sevenZip.getPath7za(),
+    icons.getIconsToolsetPath(config.toolsets?.icons, resourcesDir),
   ])
   const electron = copyTool(archive, path.join(out, 'electron.zip'))
   /** @type {import('./prepared-packaging.mjs').PackagingToolsets} */
@@ -99,16 +106,23 @@ async function acquirePackagingTools({ source, out, cache, target, formats, buil
   let windows = null
   if (process.platform === 'win32') {
     const builder = await load('toolsets/winCodeSign.js')
-    const tools = await ensureWindowsBundleTools({ config, resourcesDir, signing: true, load: async () => builder, prepared: null })
+    const signing = formats.includes('msix')
+    const tools = await ensureWindowsBundleTools({ config, resourcesDir, signing, load: async () => builder, prepared: null })
     const kitRoot = copyTool(path.dirname(path.dirname(tools.makeappx)), path.join(out, 'winCodeSign'))
-    if (!tools.dlib || !tools.dotnetRoot) throw new Error('Windows preparation requires the ATS dlib and paired .NET runtime')
-    fs.cpSync(path.dirname(tools.dlib), path.join(kitRoot, path.basename(path.dirname(tools.signtool))), { recursive: true })
+    if (signing) {
+      if (!tools.dlib || !tools.dotnetRoot) throw new Error('Windows preparation requires the ATS dlib and paired .NET runtime')
+      fs.cpSync(path.dirname(tools.dlib), path.join(kitRoot, path.basename(path.dirname(tools.signtool))), { recursive: true })
+    }
     const rcedit = await builder.getRceditBundle(config.toolsets?.winCodeSign, resourcesDir)
     fs.copyFileSync(rcedit.x64, path.join(kitRoot, 'rcedit-x64.exe'))
     fs.copyFileSync(rcedit.x86, path.join(kitRoot, 'rcedit-x86.exe'))
     const kit = path.join(kitRoot, path.basename(path.dirname(tools.makeappx)))
-    windows = { makeappx: path.join(kit, 'makeappx.exe'), signtool: path.join(kit, 'signtool.exe'),
-      dlib: path.join(kit, 'Azure.CodeSigning.Dlib.dll'), dotnetRoot: copyTool(tools.dotnetRoot, path.join(out, 'dotnet')) }
+    windows = {
+      makeappx: path.join(kit, 'makeappx.exe'),
+      signtool: path.join(kit, 'signtool.exe'),
+      dlib: tools.dlib ? path.join(kit, 'Azure.CodeSigning.Dlib.dll') : null,
+      dotnetRoot: tools.dotnetRoot ? copyTool(tools.dotnetRoot, path.join(out, 'dotnet')) : null,
+    }
     toolsets.winCodeSign = kitRoot
   }
   if (formats.includes('AppImage')) {
@@ -130,5 +144,10 @@ if (isMain(import.meta.url)) {
     format: { type: 'string', multiple: true }, dmgbuild: { type: 'string' },
   } })
   if (!values.source || !values.out || !values.cache) throw new Error('Usage: prepare-packaging-tools.mjs --source REPO --out WORK/packager --cache CACHE/packager [--target same-OS-target] [--format FORMAT] [--dmgbuild PM_BINARY]')
-  console.log(await preparePackagingTools({ source: values.source, out: values.out, cache: values.cache, target: values.target, formats: values.format, dmgbuild: values.dmgbuild }))
+  try {
+    console.log(await preparePackagingTools({ source: values.source, out: values.out, cache: values.cache, target: values.target, formats: values.format, dmgbuild: values.dmgbuild }))
+  } catch (err) {
+    console.error('PREPARE_ERROR:', err, err?.cause)
+    process.exit(1)
+  }
 }

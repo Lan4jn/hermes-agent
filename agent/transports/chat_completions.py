@@ -611,7 +611,7 @@ class ChatCompletionsTransport(ProviderTransport):
                 off = thinking_off or _effort == "none"
                 extra_body["reasoning"] = {"enabled": not off, "effort": "none" if off else _effort}
 
-        if str(params.get("provider_name") or "").strip().lower() == "gemini":
+        if str(params.get("provider_name") or "").strip().lower() in {"gemini", "google-gemini-cli"}:
             raw_thinking_config = _build_gemini_thinking_config(model, reasoning_config)
             if _is_gemini_openai_compat_base_url(base_url):
                 thinking_config = _snake_case_gemini_thinking_config(raw_thinking_config)

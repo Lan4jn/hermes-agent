@@ -56,7 +56,7 @@ function click(el: Element | null) {
 
 const button = (label: string) => document.querySelector(`button[aria-label="${label}"]`);
 
-async function renderSessionsPage(rows: Record<string, unknown>[]) {
+async function renderSessionsPage(rows: Record<string, unknown>[], readyCondition?: () => boolean) {
   // Page list uses limit 20; the overview tab's recent-cards fetch uses 50 —
   // keep the overview empty so the list view (with row actions) renders.
   apiMocks.getSessions.mockImplementation(async (limit: number) => ({
@@ -91,7 +91,11 @@ async function renderSessionsPage(rows: Record<string, unknown>[]) {
       </I18nProvider>,
     ),
   );
-  await waitFor(() => Boolean(button("Delete session")));
+  if (readyCondition) {
+    await waitFor(readyCondition);
+  } else {
+    await waitFor(() => Boolean(button("Delete session")));
+  }
 }
 
 beforeEach(() => {
@@ -114,6 +118,8 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
   vi.stubGlobal("matchMedia", () => ({ addEventListener() {}, matches: false, media: "", removeEventListener() {} }));
   sessionStorage.clear();
+  localStorage.clear();
+  localStorage.setItem("hermes-locale", "en");
 });
 
 afterEach(async () => {
@@ -187,6 +193,16 @@ describe("SessionsPage per-row profile routing (#99387)", () => {
     await act(async () => click(confirm ?? null));
 
     expect(apiMocks.deleteSession).toHaveBeenCalledWith("sid-worker", "worker");
+  });
+
+  it.each([
+    ["zh", "暂无会话"],
+    ["zh-hant", "尚無工作階段"],
+  ])("renders localized empty state in %s", async (locale, emptyText) => {
+    localStorage.setItem("hermes-locale", locale);
+    await renderSessionsPage([], () => document.body.textContent?.includes(emptyText) === true);
+    expect(document.body.textContent).toContain(emptyText);
+    expect(document.body.textContent).not.toContain("No sessions yet");
   });
 });
 

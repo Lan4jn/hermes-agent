@@ -1967,17 +1967,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 <Button
                   onClick={startFreshPty}
                   prefix={<RotateCcw className="h-4 w-4" />}
-                  aria-label="Start a new chat session"
+                  aria-label={t.chat?.startNewSessionBtn || "Start a new chat session"}
                 >
-                  Start new session
+                  {t.chat?.startNewSession || "Start new session"}
                 </Button>
                 {endedReason === "exited" && (
                   <Button
                     outlined
                     onClick={() => navigate("/logs")}
-                    aria-label="Open logs"
+                    aria-label={t.chat?.openLogs || "Open logs"}
                   >
-                    Open logs
+                    {t.chat?.openLogs || "Open logs"}
                   </Button>
                 )}
               </div>

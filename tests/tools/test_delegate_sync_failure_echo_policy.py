@@ -44,4 +44,3 @@ def test_sync_failure_real_run_to_spinner_three_modes(tmp_path, monkeypatch):
     assert not any('SYNC_REAL_CHILD_CRASH' in s for s in rows[2]['lines']), rows[2]
     for row in rows:
         assert any(e['args'][0] == 'subagent.complete' for e in row['events']), row['events']
-

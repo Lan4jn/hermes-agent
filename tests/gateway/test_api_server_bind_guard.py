@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from gateway.config import PlatformConfig
-from gateway.platforms.api_server import APIServerAdapter
+from gateway.platforms.api_server import APIServerAdapter, listen_address
 from gateway.platforms.base import is_network_accessible
 
 
@@ -57,6 +57,58 @@ class TestIsNetworkAccessible:
         ]
         with patch("gateway.platforms.base._socket.getaddrinfo", return_value=mixed_result):
             assert is_network_accessible("dual-host.local") is True
+
+
+def test_dual_stack_host_requires_remote_opt_in():
+    from gateway.platforms.api_server import normalize_api_server_host
+
+    assert normalize_api_server_host(None) is None
+    assert normalize_api_server_host("dual") is None
+    assert normalize_api_server_host("DUAL") is None
+    assert normalize_api_server_host("Dual") is None
+    assert normalize_api_server_host("::") == "::"
+    assert normalize_api_server_host("0.0.0.0") == "0.0.0.0"
+    assert normalize_api_server_host("") == "127.0.0.1"
+    assert normalize_api_server_host("   ") == "127.0.0.1"
+    assert normalize_api_server_host("127.0.0.1") == "127.0.0.1"
+    assert listen_address({"host": "dual"})[0] is None
+    assert listen_address({"host": "DUAL"})[0] is None
+    assert listen_address({"host": "::"})[0] == "::"
+    assert listen_address({"host": "0.0.0.0"})[0] == "0.0.0.0"
+
+
+@pytest.mark.asyncio
+async def test_dual_stack_bind_respects_remote_opt_in():
+    key = "test-strong-api-server-key-0123456789"
+    denied = APIServerAdapter(PlatformConfig(enabled=True, extra={
+        "host": "dual", "port": 0, "key": key, "allow_remote": False,
+    }))
+    assert await denied.connect() is False
+    assert denied._site is None
+
+    allowed = APIServerAdapter(PlatformConfig(enabled=True, extra={
+        "host": "dual", "port": 0, "key": key, "allow_remote": True,
+    }))
+    try:
+        assert await allowed.connect() is True
+        assert allowed._site is not None
+    finally:
+        await allowed.disconnect()
+
+
+@pytest.mark.platforms("windows")
+@pytest.mark.asyncio
+async def test_dual_stack_binds_both_families_on_windows():
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={
+        "host": "dual", "port": 0, "key": "test-strong-api-server-key-0123456789",
+        "allow_remote": True,
+    }))
+    try:
+        assert await adapter.connect() is True
+        families = {sock.family for sock in adapter._site._server.sockets}
+        assert {socket.AF_INET, socket.AF_INET6} <= families
+    finally:
+        await adapter.disconnect()
 
 
 # ---------------------------------------------------------------------------

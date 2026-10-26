@@ -27,8 +27,8 @@ from hermes_cli.auth import (  # resolve_external_process_provider_credentials i
     ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, AuthError, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL,
     PROVIDER_REGISTRY, _agent_key_is_usable, _nous_inference_env_override, format_auth_error, resolve_provider,
     resolve_nous_runtime_credentials, resolve_codex_runtime_credentials, resolve_xai_oauth_runtime_credentials,
-    resolve_qwen_runtime_credentials, resolve_api_key_provider_credentials,
-    resolve_external_process_provider_credentials,
+    resolve_qwen_runtime_credentials, resolve_gemini_oauth_runtime_credentials, resolve_api_key_provider_credentials,
+    resolve_external_process_provider_credentials,  # noqa: F401
     has_usable_secret, is_actual_local_base_url, looks_like_openrouter_key, normalize_actual_base_url,
 )
 from hermes_cli import config as _config_mod
@@ -566,6 +566,7 @@ from hermes_cli.runtime_provider_backends import (
 _POOL_ENTRY_SIMPLE_MODES: dict[str, tuple] = {
     "openai-codex": ("codex_responses", DEFAULT_CODEX_BASE_URL), "xai-oauth": ("codex_responses", DEFAULT_XAI_OAUTH_BASE_URL),
     "qwen-oauth": ("chat_completions", DEFAULT_QWEN_BASE_URL), "openrouter": ("chat_completions", OPENROUTER_BASE_URL),
+    "google-gemini-cli": ("chat_completions", lambda: getattr(PROVIDER_REGISTRY.get("google-gemini-cli"), "inference_base_url", "")),
     "minimax-oauth": ("anthropic_messages", lambda: getattr(PROVIDER_REGISTRY.get("minimax-oauth"), "inference_base_url", "")),
     "xai": ("codex_responses", ""),
 }
@@ -784,10 +785,37 @@ def _explicit_api_key_provider(provider, pconfig, requested_provider, model_cfg,
     return _runtime(provider, api_mode, base_url.rstrip("/"), api_key, source="explicit", requested_provider=requested_provider)
 
 
+def _explicit_gemini_oauth(requested_provider, model_cfg, api_key, base_url, target_model):
+    from hermes_cli.auth import resolve_gemini_oauth_runtime_credentials
+    try:
+        creds = resolve_gemini_oauth_runtime_credentials()
+        return {
+            "provider": "google-gemini-cli",
+            "api_mode": "chat_completions",
+            "base_url": base_url or creds.get("base_url", ""),
+            "api_key": api_key or creds.get("api_key", ""),
+            "source": creds.get("source", "google-oauth"),
+            "expires_at_ms": creds.get("expires_at_ms"),
+            "email": creds.get("email", ""),
+            "project_id": creds.get("project_id", ""),
+            "requested_provider": requested_provider,
+        }
+    except AuthError:
+        return {
+            "provider": "google-gemini-cli",
+            "api_mode": "chat_completions",
+            "base_url": base_url or getattr(PROVIDER_REGISTRY.get("google-gemini-cli"), "inference_base_url", ""),
+            "api_key": api_key or "",
+            "source": "explicit",
+            "requested_provider": requested_provider,
+        }
+
+
 # Providers with a dedicated explicit-credential builder; everything else goes through the
 # registry ``api_key`` path (or None when the provider takes no explicit creds).
 _EXPLICIT_RESOLVERS: dict[str, Callable[..., dict[str, Any]]] = {
     "anthropic": _explicit_anthropic, "openai-codex": _explicit_codex, "nous": _explicit_nous,
+    "google-gemini-cli": _explicit_gemini_oauth,
     "azure-foundry": lambda rq, mc, key, url, tm: _resolve_azure_foundry_runtime(requested_provider=rq, model_cfg=mc,
                                                                                  explicit_api_key=key, explicit_base_url=url),
 }
@@ -835,6 +863,8 @@ _OAUTH_RUNTIME_PROVIDERS: dict[str, _OAuthRuntimeSpec] = {
                                    "last_refresh", "Auto-detected xAI OAuth provider but credentials failed", DEFAULT_XAI_OAUTH_BASE_URL),
     "qwen-oauth": _OAuthRuntimeSpec(lambda: resolve_qwen_runtime_credentials(), "chat_completions", "qwen-cli",
                                     "expires_at_ms", "Qwen OAuth credentials failed"),
+    "google-gemini-cli": _OAuthRuntimeSpec(lambda: resolve_gemini_oauth_runtime_credentials(), "chat_completions", "google-oauth",
+                                           "expires_at_ms", "Google Gemini OAuth credentials failed"),
 }
 
 
@@ -844,9 +874,15 @@ def _resolve_oauth_runtime(provider, requested_provider, model_cfg, target_model
     spec = _OAUTH_RUNTIME_PROVIDERS[provider]
     creds = spec.resolve()
     api_mode = spec.api_mode(_effective_model(model_cfg, target_model)) if callable(spec.api_mode) else spec.api_mode
-    return _runtime(provider, api_mode, (creds.get("base_url") or "").rstrip("/") or spec.default_base_url,
-                    creds.get("api_key", ""), source=creds.get("source", spec.default_source),
-                    **{spec.expiry_key: creds.get(spec.expiry_key)}, requested_provider=requested_provider)
+    runtime = _runtime(provider, api_mode, (creds.get("base_url") or "").rstrip("/") or spec.default_base_url,
+                      creds.get("api_key", ""), source=creds.get("source", spec.default_source),
+                      **{spec.expiry_key: creds.get(spec.expiry_key)}, requested_provider=requested_provider)
+    if provider == "google-gemini-cli":
+        if "project_id" in creds:
+            runtime["project_id"] = creds["project_id"]
+        if "email" in creds:
+            runtime["email"] = creds["email"]
+    return runtime
 
 
 def _minimax_oauth_runtime(provider, requested_provider) -> Optional[dict[str, Any]]:
@@ -1105,6 +1141,8 @@ def _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, targe
     nothing; the last rung (OpenRouter / bare-custom fallback) always yields a runtime."""
     yield _resolve_requested_shortcuts(requested_provider, explicit_api_key, explicit_base_url, target_model)
     yield _named_custom_rung(requested_provider, explicit_api_key, explicit_base_url, target_model)
+    if requested_provider == "custom":
+        yield _openrouter_fallback(requested_provider, explicit_api_key, explicit_base_url)
     # If provider is "auto" (or unset) but config.yaml has an explicit base_url pointing at a custom/local
     # endpoint (e.g. Ollama at localhost:11434), route through the OpenAI-compatible resolver instead of
     # letting resolve_provider() pick up an ANTHROPIC_API_KEY or OPENAI_API_KEY from the environment and

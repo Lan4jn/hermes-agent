@@ -6,6 +6,7 @@ import type * as ReactRouterDom from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
+import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import type * as HubActions from '@/store/hub-actions'
 
@@ -494,5 +495,37 @@ describe('CapabilitiesView toolset management', { timeout: 60_000 }, () => {
     await waitFor(() =>
       expect(vi.mocked(installHubSkill)).toHaveBeenCalledWith('official/gifs/gif-search', expect.anything())
     )
+  })
+
+  it.each([
+    ['zh', '技能', '工具集', '连接器', '插件'],
+    ['zh-hant', '技能', '工具集', '聯結器', '外掛']
+  ] as const)('renders localized capability tabs in %s without English fallback', async (locale, skillsTab, toolsetsTab, connectorsTab, pluginsTab) => {
+    await act(async () => {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <I18nProvider configClient={null} initialLocale={locale}>
+            <MemoryRouter initialEntries={['/capabilities?tab=skills']}>
+              <CapabilitiesView />
+            </MemoryRouter>
+          </I18nProvider>
+        </QueryClientProvider>
+      )
+    })
+
+    const skillsButtons = await screen.findAllByRole('button', { name: new RegExp(skillsTab) })
+    expect(skillsButtons.length).toBeGreaterThanOrEqual(1)
+
+    const toolsetsButtons = screen.getAllByRole('button', { name: new RegExp(toolsetsTab) })
+    expect(toolsetsButtons.length).toBeGreaterThanOrEqual(1)
+
+    const connectorsButtons = screen.getAllByRole('button', { name: new RegExp(connectorsTab) })
+    expect(connectorsButtons.length).toBeGreaterThanOrEqual(1)
+
+    const pluginsButtons = screen.getAllByRole('button', { name: new RegExp(pluginsTab) })
+    expect(pluginsButtons.length).toBeGreaterThanOrEqual(1)
+
+    expect(screen.queryByRole('button', { name: /^Connectors/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Plugins/ })).toBeNull()
   })
 })

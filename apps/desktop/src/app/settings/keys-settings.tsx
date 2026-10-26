@@ -2,17 +2,19 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { $activeConnectionId } from '@/store/connections'
 import { $settingsRequestProfile } from '@/store/settings-scope'
 
 import { CredentialKeyCard, credentialPlaceholder, credentialRowLabel } from './credential-key-ui'
 import { useEnvCredentials } from './env-credentials'
 import { asText } from './helpers'
+import { MessageKeysSetting } from './message-keys-setting'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // Sub-views surfaced as sidebar subnav under Tools & Keys (see settings/index.tsx).
-export const KEYS_VIEWS = ['tools', 'settings'] as const
+export const KEYS_VIEWS = ['tools', 'settings', 'message'] as const
 
 export type KeysView = (typeof KEYS_VIEWS)[number]
 
@@ -25,19 +27,15 @@ export type KeysView = (typeof KEYS_VIEWS)[number]
 // `messaging` category but are flagged ``channel_managed`` and configured on
 // the Messaging page; only gateway-wide ``messaging`` rows (e.g. GATEWAY_PROXY)
 // appear here alongside ``setting``.
-const VIEW_CATEGORIES: Record<KeysView, readonly string[]> = {
+const VIEW_CATEGORIES: Record<Exclude<KeysView, 'message'>, readonly string[]> = {
   settings: ['setting', 'messaging'],
   tools: ['tool']
 }
 
 const credentialElementId = (key: string) => `credential-key-${key}`
 
-export function KeysSettings({ view }: KeysSettingsProps) {
+function EnvCredentialsSettings({ view }: { view: Exclude<KeysView, 'message'> }) {
   const { t } = useI18n()
-  // Shared settings "Applies to" scope: fetch + edit the selected profile's
-  // env store instead of the active one (undefined → active, the default
-  // path — request-shaped so the API helpers never see a primary-targeting
-  // null).
   const scopeProfile = useStore($settingsRequestProfile)
   const { rowProps, vars } = useEnvCredentials(scopeProfile)
   const [openKey, setOpenKey] = useState<null | string>(null)
@@ -66,10 +64,6 @@ export function KeysSettings({ view }: KeysSettingsProps) {
 
   const deepLinkReady = useCallback((key: string) => renderableKeys.has(key), [renderableKeys])
 
-  // Deep link from ⌘K / Capabilities env-var rows (?tab=keys&key=<ENV_KEY>):
-  // scroll the credential card into view, flash it, and expand it. Only
-  // consume keys rendered by this sub-view so a stale Tools/Settings pairing
-  // cannot keep trying to mount a target this pane never shows.
   useDeepLinkHighlight({
     elementId: credentialElementId,
     onResolve: resolveDeepLink,
@@ -112,6 +106,17 @@ export function KeysSettings({ view }: KeysSettingsProps) {
       )}
     </SettingsContent>
   )
+}
+
+export function KeysSettings({ view }: KeysSettingsProps) {
+  const connectionId = useStore($activeConnectionId)
+  const scopeProfile = useStore($settingsRequestProfile)
+
+  if (view === 'message') {
+    return <MessageKeysSetting key={`${connectionId}:${scopeProfile ?? 'default'}`} />
+  }
+
+  return <EnvCredentialsSettings view={view} />
 }
 
 interface KeysSettingsProps {

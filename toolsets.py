@@ -169,6 +169,12 @@ TOOLSETS = {
     "yuanbao": _ts("Yuanbao platform tools - group info, member queries, DM, stickers", _YUANBAO_TOOLS),
     "feishu_doc": _ts("Read Feishu/Lark document content", ["feishu_doc_read"]),
     "feishu_drive": _ts("Feishu/Lark document comment operations (list, reply, add)", _FEISHU_TOOLS[1:]),
+    "spotify": _ts(
+        "Native Spotify playback, search, playlist, album, and library tools",
+        ["spotify_playback", "spotify_devices", "spotify_queue", "spotify_search",
+         "spotify_playlists", "spotify_albums", "spotify_library"],
+    ),
+    "peer_messaging": _ts("Hermes node-to-node messaging via configured /message peers", ["send_hermes_message"]),
 
     # Scenario-specific toolsets
     "debugging": _ts("Debugging and troubleshooting toolkit", ["terminal", "process_manage"], includes=["web", "file"]),
@@ -195,8 +201,8 @@ TOOLSETS = {
     ),
     "hermes-api-server": _ts(
         "OpenAI-compatible API server — full agent tools accessible via HTTP (no "
-        "interactive UI tools like clarify or send_message)",
-        _core_without("text_to_speech", "clarify", "computer_use", kanban=False),
+        "interactive UI tools like clarify or send_message; configured Hermes peer messaging is allowed)",
+        _core_without("text_to_speech", "clarify", "computer_use", kanban=False) + ["send_hermes_message"],
     ),
     "hermes-cli": _bundle("Full interactive CLI toolset - all default tools plus cronjob management"),
 

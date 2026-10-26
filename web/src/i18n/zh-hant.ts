@@ -1,6 +1,26 @@
 import type { Translations } from "./types";
+import {
+  channelsZhHant, filesZhHant, mcpZhHant, webhooksZhHant, systemPageZhHant,
+  profileBuilderZhHant, blueprintsZhHant, modelPickerZhHant, modelInfoZhHant,
+  skillEditorZhHant, toolsetConfigZhHant, modelsPageZhHant,
+  skillsPageZhHant, pairingZhHant,
+} from "./pagesZhHant";
 
 export const zhHant: Translations = {
+  channels: channelsZhHant,
+  files: filesZhHant,
+  mcp: mcpZhHant,
+  webhooks: webhooksZhHant,
+  systemPage: systemPageZhHant,
+  profileBuilder: profileBuilderZhHant,
+  blueprints: blueprintsZhHant,
+  modelPicker: modelPickerZhHant,
+  modelInfo: modelInfoZhHant,
+  skillEditor: skillEditorZhHant,
+  toolsetConfig: toolsetConfigZhHant,
+  modelsPage: modelsPageZhHant,
+  skillsPage: skillsPageZhHant,
+  pairing: pairingZhHant,
   common: {
     save: "儲存",
     saving: "儲存中...",
@@ -35,6 +55,10 @@ export const zhHant: Translations = {
     match: "符合",
     other: "其他",
     configured: "已設定",
+    edit: "編輯",
+    dismiss: "關閉",
+    open: "開啟",
+    installed: "已安裝",
     removed: "已移除",
     failedToToggle: "切換失敗",
     failedToRemove: "移除失敗",
@@ -47,6 +71,13 @@ export const zhHant: Translations = {
       "無法載入此外掛的指令碼。請檢查網路請求（dashboard-plugins/…）以及伺服器上的外掛路徑。",
     pluginNotRegistered:
       "外掛指令碼未呼叫 register()，或執行時發生錯誤。請開啟瀏覽器主控台查看詳細資訊。",
+
+    loadFailed: "無法載入{what}。請檢查儀表盤服務是否執行，並點選重試。",
+    loadFailedDetails: "詳細資訊：{detail}",
+    model: "模型",
+    reasoning: "推理強度",
+    gateway: "閘道器",
+    gatewayHint: "訊息平臺、API 伺服器和 Webhook 請在渠道頁面進行配置。這些屬於全閘道器設定（代理/中繼模式以及全域性白名單）。",
   },
 
   app: {
@@ -65,6 +96,9 @@ export const zhHant: Translations = {
       running: "執行中",
       starting: "啟動中",
       stopped: "已停止",
+
+      degraded: "效能降級",
+      heartbeatStale: "心跳已過期",
     },
     nav: {
       analytics: "分析",
@@ -90,6 +124,27 @@ export const zhHant: Translations = {
     statusOverview: "狀態總覽",
     system: "系統",
     webUi: "管理面板",
+
+    managingProfile: "管理配置檔案",
+    currentProfileOption: "當前儀表盤 ({name})",
+    managingProfileBanner: "正在管理配置檔案 “{name}” —— 配置、金鑰、技能、MCP、模型及新對話均將應用於該配置檔案。",
+    memoryOomRestartBanner: "代理發生意外重啟，很可能是因為記憶體不足。長會話和多個併發任務會增加記憶體使用量。",
+    memoryCriticalBanner: "代理的記憶體即將耗盡並可能重啟。建議關閉空閒會話或升級主機記憶體。",
+    memoryElevatedBanner: "代理當前可用記憶體偏低。",
+    diskCriticalBanner: "代理所在磁碟幾乎已滿。新訊息、記憶和設定可能無法儲存。",
+    diskElevatedBanner: "代理所在磁碟空間正在佔滿。建議清理舊會話或擴充儲存空間。",
+    multiplexStandaloneBanner: "閘道器當前僅服務單個 Profile。未服務的 Profile：{profiles}。原因：{reason}。修復方式：hermes gateway migrate --multiplex",
+    dismiss: "關閉",
+    sharedMetricsTitle: "協助改進 Hermes？",
+    sharedMetricsBody:
+      "共享指標為有限的計數，絕不包含提示詞、檔案、路徑或錯誤文字。統計保留在本機；傳送給 Nous 是單獨的可選項。",
+    sharedMetricsReaskBody:
+      "再次詢問：舊版本可能在你看到此問題之前就已儲存了「不用了」。",
+    sharedMetricsShare: "傳送給 Nous",
+    sharedMetricsLocal: "僅保留在本地",
+    sharedMetricsOff: "不用了",
+    sharedMetricsDetails: "詳細資訊",
+    sharedMetricsSaveFailed: "無法儲存你的選擇",
   },
 
   status: {
@@ -124,6 +179,13 @@ export const zhHant: Translations = {
     updateHermes: "更新 Hermes",
     updatingHermes: "正在更新 Hermes…",
     waitingForOutput: "等待輸出…",
+
+    disabled: "已禁用",
+    restartGatewayConfirmMessage: "這將重啟 Hermes 閘道器程序。已連線的渠道和活躍會話將在重啟後自動重連。",
+    restartGatewayConfirmTitle: "重啟閘道器？",
+    updateHermesConfirmMessage: "這將執行 hermes update 並在完成後重啟閘道器。活躍會話在此之前將保留其提示詞快取。",
+    updateHermesConfirmNow: "立即更新",
+    updateHermesConfirmTitle: "更新 Hermes？",
   },
 
   sessions: {
@@ -205,6 +267,13 @@ export const zhHant: Translations = {
     perDayAvg: "/日 平均",
     acrossModels: "共 {count} 個模型",
     inOut: "輸入 {input} / 輸出 {output}",
+    tokensHiddenTitle: "Token 分析已隱藏",
+    tokensHiddenDesc1:
+      "此頁面上的 Token、費用及每日分析僅為本機偵錯估算值。僅統計包含有效用量區塊的主代理成功回應，未計入輔助呼叫（上下文壓縮、標題生成、視覺、工作階段搜尋、網頁擷取、智慧審批、MCP 路由、外掛 LLM 存取）以及提供者端重試和降級嘗試。快取寫入亦完全未包含在內。",
+    tokensHiddenDesc2:
+      "對於輔助流量較大的模型（如 Kimi K2.6、MiniMax M2.7），本機統計的總量可能比提供者帳單低 10 到 100 倍。隱藏這些數字比呈現可能誤導的數值更穩妥。",
+    tokensHiddenDesc3:
+      "請前往您的模型提供者控制台（OpenRouter、Anthropic 等）查看實際用量與帳單。若仍希望顯示本機偵錯估算，請於「設定」中設置 dashboard.show_token_analytics: true。",
   },
 
   models: {
@@ -217,6 +286,11 @@ export const zhHant: Translations = {
     toolCalls: "工具呼叫",
     noModelsData: "此時間範圍內無模型使用資料",
     startSession: "開始工作階段後將於此處顯示模型資料",
+
+    reload: "重新載入",
+    switchModelConfirmTitle: "切換模型？",
+    switchModelConfirmDesc: (model: string) =>
+      `切換到 ${model} 將開始新會話。當前會話仍保留在會話列表中，代理的記憶也會保留。立即重新載入以應用？`,
   },
 
   logs: {
@@ -288,10 +362,33 @@ export const zhHant: Translations = {
       discord: "Discord",
       slack: "Slack",
       email: "Email",
+
+      needsHomeChannel: "請先設定主渠道",
+      noneConfigured: "尚未配置任何訊息平臺。請在渠道中進行設定以投遞通知。",
     },
+
+    loadWhat: "定時任務",
+    scriptRequired: "純指令碼任務需要指定指令碼路徑。請填寫指令碼路徑欄位或將任務切換回提示詞模式。",
+    overdueSince: "已逾期於",
+    schedulerLastTicked: "排程器最後執行於 {when} —— 自該時間點後到期的任務未被觸發",
+    editJob: "編輯任務",
+    allProfiles: "所有設定檔",
+    profileLabel: "設定檔",
+    advancedFields: "進階選項",
+    providerLabel: "模型提供商",
+    defaultOption: "預設",
+    modelLabel: "模型",
+    baseUrlOverride: "自訂 Base URL",
+    script: "指令碼",
+    workdir: "工作目錄",
+    contextFrom: "上下文來源任務 ID",
+    oneJobPerLine: "每行一個任務 ID",
+    enabledToolsets: "啟用的工具集",
+    skillsOptional: "技能（可選）",
   },
 
   profiles: {
+    buildProfile: "精靈建構",
     newProfile: "新增設定檔",
     name: "名稱",
     namePlaceholder: "例如：coder、writer 等",
@@ -321,6 +418,37 @@ export const zhHant: Translations = {
     created: "已建立",
     deleted: "已刪除",
     renamed: "已重新命名",
+
+    activeProfile: "活躍配置檔案",
+    activeBadge: "活躍",
+    setActive: "設為活躍",
+    activeSet: "已設為活躍配置檔案",
+    gatewayRunning: "閘道器執行中",
+    gatewayStopped: "閘道器已停止",
+    gatewayRunningWarning: "該配置檔案的閘道器正在執行 —— 將被停止。",
+    aliasBadge: "別名",
+    description: "描述",
+    descriptionPlaceholder: "該配置檔案擅長什麼？用於透過角色路由看板任務。",
+    noDescription: "暫無描述",
+    editDescription: "編輯描述",
+    descriptionSaved: "描述已儲存",
+    reviewBadge: "審查",
+    autoGenerate: "自動生成",
+    generating: "正在生成…",
+    describeFailed: "無法生成描述",
+    distribution: "分佈",
+    advancedOptions: "高階選項",
+    cloneAll: "克隆全部（記憶、會話、技能、狀態）",
+    noSkillsOption: "不預裝內建技能",
+    descriptionOptional: "描述（可選）",
+    modelOptional: "模型（可選）",
+    modelInherit: "繼承自克隆源 / 預設",
+    modelLoading: "正在載入模型…",
+    modelNone: "尚未配置任何模型提供方。請在金鑰頁面新增 API Key 或在模型頁面登入提供方。",
+    editModel: "更換模型",
+    modelSaved: "模型已更新",
+    modelSelect: "選擇模型",
+    actions: "操作",
   },
 
   pluginsPage: {
@@ -364,6 +492,28 @@ export const zhHant: Translations = {
     versionBadge: "版本",
     showInSidebar: "顯示於側邊欄",
     hideFromSidebar: "從側邊欄隱藏",
+    statusLabels: {
+      ready: "就緒",
+      needs_config: "需要設定",
+      unavailable: "不可用",
+      missing: "遺失",
+    },
+
+    updateConsentBody: (name        , sha        ) =>
+      `新版本目錄中鎖定包含 ${name} (${sha}) 引入了已安裝版本所沒有的暴露面。僅在信任來源的前提下應用該更新：`,
+    catalogHeading: "外掛目錄",
+    catalogHint: "精選並由 Nous 團隊審查、精確鎖定 commit 的外掛。從此安裝可確保供應鏈安全。",
+    catalogSearchPlaceholder: "搜尋目錄...",
+    catalogEmpty: "沒有匹配的目錄項。",
+    catalogEmptyDocsLink: "瞭解 Hermes 外掛",
+    catalogInstallBtn: "安裝",
+    catalogInstalledBadge: "已安裝 ✓",
+    catalogUpdateBtn: "有可用更新",
+    catalogRemovedBadge: "已移除",
+    catalogConfirmTitle: "安裝此外掛？",
+    catalogConfirmInstallNote: "外掛安裝後處於禁用狀態；安裝完成後啟用以啟用。",
+    catalogRequiresEnv: "需要環境變數",
+    removedFromCatalog: "已從目錄中移除",
   },
 
   skills: {
@@ -384,6 +534,13 @@ export const zhHant: Translations = {
     setupNeeded: "需要設定",
     disabledForCli: "CLI 已停用",
     more: "還有 {count} 個",
+
+    loadWhat: "技能",
+    browseHub: "瀏覽技能中心",
+    createSkill: "建立技能",
+    profileSelector: "配置檔案",
+    currentProfile: "當前 ({name})",
+    managingProfile: "正在管理配置檔案 “{name}” —— 開關僅應用於該配置檔案，而非當前儀表盤。",
   },
 
   config: {
@@ -507,6 +664,13 @@ export const zhHant: Translations = {
   theme: {
     title: "主題",
     switchTheme: "切換主題",
+
+    fontTitle: "字型",
+    fontDefault: "主題預設",
+    fontDefaultHint: "使用當前主題的字型",
+    fontSans: "無襯線 (Sans)",
+    fontSerif: "襯線 (Serif)",
+    fontMono: "等寬 (Mono)",
   },
 
   achievements: {
@@ -782,5 +946,80 @@ export const zhHant: Translations = {
       "工作區路徑（選填，留空則依負責人推導）",
     logTruncated: "（顯示最後 100 KB — 完整日誌位於 ",
     logAt: "）",
+
+    needsAssignee: "缺少指派人",
+    needsAssigneeHint: "前置依賴均已滿足，但分派器會跳過此任務直到為其指定配置檔案。",
+    confirmScheduled: "將此任務移至計劃中？適用於明確的時間延遲，而非人工阻塞。",
+    newTaskTitle: "新建任務 —— {column}",
+    taskTitleLabel: "標題",
+    assigneeLabel: "指派人",
+    assigneeLabelHint: "（留空 = 分派器自動選擇）",
+    skillsLabel: "技能",
+    skillsLabelHint: "（可選，逗號分隔）",
+    parentLabel: "父任務",
+    parentLabelHint: "（子任務在父任務完成前保持阻塞）",
+    create: "建立",
+    boardSettings: "設定",
+    boardSettingsTitle: "看板設定 —— 名稱、描述以及新任務繼承的預設專案目錄",
+    boardSettingsTitleFor: "看板設定 —— {name}",
+    projectDirectoryOverrideHint: "新任務將繼承此目錄作為預設工作區；各任務仍可在建立彈窗中覆蓋此項。",
+    saving: "正在儲存…",
+    commentHint: "評論會在工作執行單元下次執行或 kanban_show() 時送達 —— 無需先阻塞任務。",
+    commentHintTitle: "評論是與任務工作單元交流的通道。評論會立即傳送到執行緒中 —— 無需先阻塞任務。正在執行的工作單元會在下次 kanban_show() 或重啟時接收執行緒；僅當需要工作單元停止並等待輸入時才進行阻塞。",
+    trash: {
+      confirmTitle: "刪除任務？",
+      confirmManyTitle: "刪除 {n} 個任務？",
+    },
+  },
+
+  messageKeys: {
+    title: "訊息 API 金鑰",
+    description: "管理透過 HTTP /message 介面傳送訊息的訪問金鑰。",
+    policyTitle: "身份驗證策略 (require_chat_key)",
+    policyDesc: "啟用後，所有傳送至 /message 的請求必須提供與有效金鑰匹配的 api_key。",
+    policyRequired: "強制驗證（受保護）",
+    policyOptional: "可選驗證（未保護）",
+    policyUpdating: "正在更新...",
+    policyEnabledToast: "已啟用訊息 API 身份驗證",
+    policyDisabledToast: "已禁用訊息 API 身份驗證",
+    newKeyBannerTitle: "新金鑰已建立 — 請立即複製",
+    newKeyBannerDesc: "此金鑰將永不再顯示。請複製並妥善保管在安全位置。",
+    copiedToast: "已將金鑰複製到剪貼簿",
+    copyBtn: "複製",
+    copiedBtn: "已複製",
+    doneBtn: "完成",
+    createCardTitle: "建立訊息金鑰",
+    createPlaceholder: "金鑰標籤或客戶端名稱（例如 node-alpha）",
+    createBtn: "建立",
+    creatingBtn: "正在建立...",
+    createSuccessToast: "訊息金鑰建立成功",
+    activeKeysTitle: "活躍訊息金鑰",
+    noKeysDesc: "尚未建立任何訊息金鑰。",
+    createdPrefix: "建立時間：",
+    revokeDialogTitle: "撤銷訊息金鑰",
+    revokeDialogDesc: "確定要撤銷金鑰 \"{name}\" 嗎？使用該金鑰的客戶端將立即失去訪問許可權。",
+    revokeBtn: "撤銷",
+    revokingBtn: "正在撤銷...",
+    revokeSuccessToast: "金鑰已撤銷",
+  },
+
+  chat: {
+    isReconnecting: "正在重新連線…",
+    disconnected: "連線已中斷",
+    reconnect: "重新連線",
+    reconnectNow: "立即重新連線",
+    sessionEnded: "Agent 會話已結束",
+    startNewSession: "開始新會話",
+    startNewSessionBtn: "開始新的對話會話",
+    copyLastResponse: "複製最後回覆",
+    copyLastResponseMarkdown: "以原始 Markdown 格式複製最後一則助理回覆",
+    copyLastResponseBtn: "複製最後一則助理回覆",
+    copied: "已複製",
+    showSidePanel: "展開側邊欄",
+    showSidePanelAria: "展開側邊欄",
+    collapseSidePanel: "收合側邊欄",
+    collapseSidePanelAria: "收合側邊欄",
+    panel: "側邊欄",
+    openLogs: "查看日誌",
   },
 };

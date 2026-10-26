@@ -428,12 +428,14 @@ def _ensure_windows_gateway_venv_imports() -> None:
 
     project_root = Path(__file__).resolve().parent.parent
     from pm.environments import committed_venv, venv_python_version
-
-    # A PM install's store Python was already activated onto the committed generation by
-    # hermes_bootstrap; overlaying the leftover pre-PM venv loads a foreign ABI (#122183).
-    if committed_venv(project_root) is not None:
-        return
-    candidates = [Path(v) for v in (os.environ.get("VIRTUAL_ENV"),) if v] + [project_root / "venv"]
+    selected = committed_venv(project_root)
+    if selected is not None:
+        if str(selected / "Lib" / "site-packages") in sys.path:
+            return
+        candidates = [selected]
+    else:
+        candidates = [Path(os.environ["VIRTUAL_ENV"])] if os.environ.get("VIRTUAL_ENV") else []
+        candidates.append(project_root / "venv")
 
     seen: set[str] = set()
     for venv_dir in candidates:

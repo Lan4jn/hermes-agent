@@ -615,6 +615,7 @@ export interface Translations extends NoticeTranslations {
       keybinds: string
       keysTools: string
       keysSettings: string
+      keysMessage: string
       mcp: string
       archivedChats: string
       sessions: string
@@ -1282,6 +1283,34 @@ export interface Translations extends NoticeTranslations {
       loading: string
       failedLoad: string
       empty: string
+    }
+    messageKeys?: {
+      enforcementPolicyTitle: string
+      requireChatKeyTitle: string
+      requireChatKeyDesc: string
+      newKeyBannerTitle: string
+      newKeyBannerDesc: string
+      activeKeysTitle: (count: number) => string
+      createKeyBtn: string
+      emptyKeys: string
+      createDialogTitle: string
+      createDialogDesc: string
+      keyNamePlaceholder: string
+      cancelBtn: string
+      createBtn: string
+      creatingBtn: string
+      revokeDialogTitle: string
+      revokeDialogDesc: (name: string) => string
+      revokeBtn: string
+      revokingBtn: string
+      copied: string
+      copy: string
+      done: string
+      keyCreatedToast: string
+      keyRevokedToast: (name: string) => string
+      keyCopiedToast: string
+      policyRequiredToast: string
+      policyOptionalToast: string
     }
     search: {
       placeholder: string
@@ -3556,6 +3585,7 @@ export interface Translations extends NoticeTranslations {
     priceTitle: string
     wasPrice: string
     customModel: string
+    moaPresets: string
     addCustomModelAction: string
     customModelPlaceholder: string
   }

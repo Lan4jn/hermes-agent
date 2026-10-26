@@ -383,6 +383,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
                 id: 'kview:settings',
                 label: t.settings.nav.keysSettings,
                 onSelect: () => openKeysView('settings')
+              },
+              {
+                active: activeView === 'keys' && keysView === 'message',
+                icon: KeyRound,
+                id: 'kview:message',
+                label: t.settings.nav.keysMessage,
+                onSelect: () => openKeysView('message')
               }
             ],
             icon: KeyRound,

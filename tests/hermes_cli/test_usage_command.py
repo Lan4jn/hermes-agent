@@ -61,4 +61,3 @@ def test_hermes_usage_without_credential_exits_nonzero_with_one_stderr_line(caps
     out, err = capsys.readouterr()
     assert out == ""
     assert err.count("\n") == 1 and "openai-codex" in err
-

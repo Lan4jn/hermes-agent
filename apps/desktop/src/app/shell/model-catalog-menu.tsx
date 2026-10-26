@@ -842,7 +842,7 @@ export function ModelCatalogMenu({
       {!hideCatalog && shownMoaPresets.length > 0 ? (
         <div>
           {hasList ? <DropdownMenuSeparator className="mx-0" /> : null}
-          <DropdownMenuLabel className={dropdownMenuSectionLabel}>MoA presets</DropdownMenuLabel>
+          <DropdownMenuLabel className={dropdownMenuSectionLabel}>{copyPicker.moaPresets}</DropdownMenuLabel>
           {shownMoaPresets.map(preset => {
             const isCurrentMoa = current.provider === 'moa' && current.model === preset
 

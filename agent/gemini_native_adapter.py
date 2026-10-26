@@ -181,9 +181,13 @@ def normalize_gemini_base_url(base_url: Optional[str]) -> str:
 def is_native_gemini_base_url(base_url: str) -> bool:
     """True when the endpoint speaks Gemini's native REST API (not ``/openai``)."""
     normalized = str(base_url or "").strip().rstrip("/").lower()
-    if normalized.endswith("/openai"):
+    if normalized.endswith("/openai") or normalized.endswith("/v1"):
         return False
-    return "generativelanguage.googleapis.com" in normalized or is_vertex_express_base_url(normalized)
+    return (
+        "generativelanguage.googleapis.com" in normalized
+        or is_vertex_express_base_url(normalized)
+        or normalized.endswith("/v1beta")
+    )
 
 
 def gemini_accepts_parameters_json_schema(base_url: str) -> bool:

@@ -401,10 +401,10 @@ def generate_launchd_plist() -> str:
     <array>
         {prog_args_xml}
     </array>
-    
+
     <key>WorkingDirectory</key>
     <string>{working_dir}</string>
-    
+
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -421,10 +421,10 @@ def generate_launchd_plist() -> str:
         <string>Aqua</string>
         <string>Background</string>
     </array>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
@@ -451,7 +451,7 @@ def generate_launchd_plist() -> str:
 {nofile_block}
     <key>StandardOutPath</key>
     <string>{stdout_log}</string>
-    
+
     <key>StandardErrorPath</key>
     <string>{stderr_log}</string>
 </dict>

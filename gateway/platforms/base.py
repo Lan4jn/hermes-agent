@@ -1183,15 +1183,61 @@ def _existing_regular_file(raw: str) -> bool:
 
 SUPPORTED_DOCUMENT_TYPES = {
     ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".csv": "text/csv",
-    ".log": "text/plain", ".json": "application/json", ".xml": "application/xml",
+    ".tsv": "text/tab-separated-values", ".log": "text/plain", ".json": "application/json",
+    ".jsonl": "application/json", ".xml": "application/xml",
     ".yaml": "application/yaml", ".yml": "application/yaml", ".toml": "application/toml",
-    ".ini": "text/plain", ".cfg": "text/plain", ".zip": "application/zip",
+    ".ini": "text/plain", ".cfg": "text/plain", ".conf": "text/plain", ".config": "text/plain",
+    ".properties": "text/plain", ".sql": "text/plain", ".sh": "text/plain", ".bash": "text/plain",
+    ".zsh": "text/plain", ".ps1": "text/plain", ".bat": "text/plain", ".cmd": "text/plain",
+    ".py": "text/plain", ".js": "text/plain", ".ts": "text/plain", ".html": "text/html",
+    ".css": "text/css", ".zip": "application/zip",
     ".doc": "application/msword", ".xls": "application/vnd.ms-excel",
     ".ppt": "application/vnd.ms-powerpoint",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".ts": "text/plain", ".py": "text/plain", ".sh": "text/plain"}
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}
+
+TEXT_INJECT_DOCUMENT_EXTENSIONS = {
+    ".md", ".txt", ".csv", ".tsv", ".log", ".json", ".jsonl", ".xml",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".config",
+    ".properties", ".sql", ".sh", ".bash", ".zsh", ".ps1", ".bat",
+    ".cmd", ".py", ".js", ".ts", ".html", ".css",
+}
+
+TEXT_INJECT_DOCUMENT_FILENAMES = {
+    ".env",
+    ".gitignore",
+    "dockerfile",
+    "compose.yml",
+    "compose.yaml",
+}
+
+TEXT_INJECT_DOCUMENT_MIME_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "text/tab-separated-values",
+    "text/html",
+    "text/css",
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/toml",
+}
+
+
+def is_text_inject_document(filename: str, media_type: str = "") -> bool:
+    """Return True when a document should have text content injected."""
+    display_name = Path(filename or "").name.lower()
+    ext = Path(display_name).suffix.lower()
+    if ext in TEXT_INJECT_DOCUMENT_EXTENSIONS or ext in _TEXT_INJECT_EXTENSIONS:
+        return True
+    if display_name in TEXT_INJECT_DOCUMENT_FILENAMES:
+        return True
+    normalized = str(media_type or "").strip().lower()
+    if normalized in TEXT_INJECT_DOCUMENT_MIME_TYPES:
+        return True
+    return normalized.startswith("text/")
 
 # Files safe to inline into the prompt when small. An extension gate, NOT a blind UTF-8 decode
 # (PDF/zip/docx can start with decodable ASCII). Non-members are still cached by path.

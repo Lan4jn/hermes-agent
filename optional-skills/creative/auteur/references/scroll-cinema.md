@@ -81,7 +81,7 @@ ScrollTrigger.create({
 | Mobile > 1080p lag | Serve `hero-mobile.mp4` at 720p via media query |
 | `content-visibility: auto` on parent | Breaks ScrollTrigger — never use on pinned ancestors |
 
-**Use when:** hero section, 3–6 s sell-the-product moment, user = director concept.  
+**Use when:** hero section, 3–6 s sell-the-product moment, user = director concept.
 **Avoid when:** long-form content pages, information-first UX, full-page application.
 
 ---
@@ -158,7 +158,7 @@ preloadAll().then(() => {
 | Screen reader sees nothing | `role="img"` + `aria-label` on canvas; add `<p>` description in section |
 | PageSpeed "large network payload" | CDN + HTTP/2 multiplexing + Service Worker cache; minimal first frame as LCP |
 
-**Use when:** pixel-accurate product spin, text-in-frame scenes, A/B-swappable keyframes.  
+**Use when:** pixel-accurate product spin, text-in-frame scenes, A/B-swappable keyframes.
 **Avoid when:** AI scene > 10 s (video is cheaper); dynamic/personalized content.
 
 ---
@@ -223,7 +223,7 @@ ScrollTrigger.create({
 | `content-visibility: auto` on pinned parent | Never use — breaks ScrollTrigger |
 | GSAP SplitText is Club (paid) | Use **SplitType** (`npm i split-type`) instead — MIT, same API shape |
 
-**Use when:** any site with more than one scroll effect, pin/parallax/horizontal scroll needed.  
+**Use when:** any site with more than one scroll effect, pin/parallax/horizontal scroll needed.
 **Avoid when:** pure CSS page with no animations, or JS-budget-critical JAMStack.
 
 ---
@@ -289,7 +289,7 @@ if (!CSS.supports('animation-timeline', 'scroll()')) {
 | Layout properties (`width`, `top`) are slow | Animate only composited properties: `transform`, `opacity`, `filter` |
 | `view()` fails inside a scroll container | Read MDN `view-timeline-scope` |
 
-**Use when:** simple pages, no GSAP budget, maximum GPU-composited performance.  
+**Use when:** simple pages, no GSAP budget, maximum GPU-composited performance.
 **Avoid when:** you need pin sections, snapping, complex timelines — that's GSAP territory.
 
 ---
@@ -361,7 +361,7 @@ document.querySelectorAll('.reveal-text').forEach(el => io.observe(el))
 | Layout shift after split | Reserve height with `min-height`; or use mask variant so no element leaves flow |
 | `prefers-reduced-motion` | Skip transition entirely — show final state immediately |
 
-**Use when:** hero headings, key subheads, manifesto lines, pull quotes.  
+**Use when:** hero headings, key subheads, manifesto lines, pull quotes.
 **Avoid when:** body-text articles, documentation, every other paragraph — it desensitizes.
 
 ---
@@ -543,7 +543,7 @@ Same screen-space quad rig as the displacement morph, but the fragment shader ge
 | Long `if` blocks in shader | Replace all branching with `step()` / `smoothstep()` — branch divergence kills GPU perf |
 | iOS Safari WebGL 2 | Available on A12+ (2018+); add `WebGL1Renderer` fallback for older |
 
-**Use when:** two AI keyframes, brand identity moment, abstract state transition.  
+**Use when:** two AI keyframes, brand identity moment, abstract state transition.
 **Avoid when:** product catalog, text-first page, information-priority UX.
 
 ---
@@ -609,7 +609,7 @@ document.querySelectorAll('a[data-spa]').forEach(a => {
 | Glitchy positioned/transformed elements | View Transitions capture layout boxes; rebuild manually for complex absolute layouts |
 | `prefers-reduced-motion` | `@media (prefers-reduced-motion: reduce) { ::view-transition-* { animation-duration: 0.01ms !important; } }` |
 
-**Use when:** e-commerce card → detail, portfolio thumbnail → case study, SPA navigation.  
+**Use when:** e-commerce card → detail, portfolio thumbnail → case study, SPA navigation.
 **Avoid when:** you want GLSL noise/glitch — use a persistent WebGL scene instead.
 
 ---
@@ -684,7 +684,7 @@ ffmpeg -i source.wav -c:a libopus -b:a 64k ambient.opus
 | iOS Safari `<audio loop>` glitch | Use WebAudio `BufferSource` with `loop = true`; or crossfade two instances |
 | Mobile data cost | 64 kbps Opus loop ≈ 30 KB/30 s — acceptable; VP9 video costs more |
 
-**Use when:** product demo, generative art, film/game promo, atmospheric brand.  
+**Use when:** product demo, generative art, film/game promo, atmospheric brand.
 **Avoid when:** corporate, documentation, news, e-commerce (unless explicitly cinematic brand).
 
 ---

@@ -120,6 +120,8 @@ export const zhOverrides = {
     deleteBody: '将移至废纸篓，你可以从那里恢复。',
     pathCopied: '已复制路径',
     revealMissing: '该文件夹不在这台电脑上'
+  ,
+    revealUnavailable: '该路径不在当前计算机上 — 它位于后端机器上。请使用“在文件树中显示”。',
   },
 
   boot: {
@@ -143,6 +145,13 @@ export const zhOverrides = {
         'Still retrying in the background. You can keep reading and drafting — open Gateway settings if this persists.',
       gatewaySignInRequired: '需要登录网关',
       ipcBridgeUnavailable: '桌面 IPC 桥不可用。'
+    ,
+      restartHermes: '重启 Hermes',
+      openLogs: '打开日志',
+      reconnectNow: '立即重新连接',
+      connectionSettings: '连接设置',
+      gatewaySignInRequiredDetail: '重新登录以重新连接。您的聊天记录和设置均完好无损。',
+      signInAgain: '重新登录',
     },
     failure: {
       title: 'Hermes 无法启动',
@@ -178,7 +187,18 @@ export const zhOverrides = {
       signInToRemoteGateway: '登录远程网关',
       signInWithProvider: provider => `使用 ${provider} 登录`,
       identityProvider: '你的身份提供方'
+    ,
+      details: '详情',
     }
+  ,
+    causes: {
+      exitedEarly: "Hermes 后台服务在启动后立即停止。",
+      timedOut: "Hermes 后台服务未及时响应。",
+      permission: "Hermes 无法写入其数据文件夹（权限问题）。",
+      diskFull: '磁盘已满，Hermes 无法启动。',
+      portInUse: '其他程序正在占用 Hermes 所需的网络端口。',
+      installMissing: "Hermes 的部分安装文件缺失。请选择“修复安装”进行恢复。",
+    },
   },
 
   notifications: {
@@ -226,6 +246,10 @@ export const zhOverrides = {
       openaiRejectedApiKey: 'OpenAI 拒绝了该 API key。',
       openaiTtsNeedsKey: 'OpenAI TTS 需要 VOICE_TOOLS_OPENAI_KEY 或 OPENAI_API_KEY。',
       codeSkewRestartRequired: '更新后此后端仍在运行旧代码。请重启以加载新代码。'
+    ,
+      storageFailure: "Hermes 无法保存至其数据文件夹。请打开“维护”进行检查并修复。",
+      rpcOutOfSync: '应用与后端版本不一致。请更新两者。',
+      restartHermesFailed: "无法重启 Hermes",
     },
     voice: {
       configureSpeechToText: '配置语音转文字后即可使用语音模式。',
@@ -268,6 +292,14 @@ export const zhOverrides = {
       backgroundFailedTitle: '后台任务失败',
       creditsTitle: '额度'
     }
+  ,
+    actions: {
+      restartHermes: '重启 Hermes',
+      openKeys: '打开密钥',
+      openGateways: '打开网关',
+      openMaintenance: '打开维护',
+    },
+    compressDeferredDone: '上下文压缩完成',
   },
 
   ...zhNotices,
@@ -431,8 +463,17 @@ export const zhOverrides = {
       'composer.slash': '斜杠命令面板',
       'composer.help': '快速帮助',
       'composer.history': '切换弹窗/历史',
-      'composer.cancel': '关闭弹窗·取消运行'
+      'composer.cancel': '关闭弹窗·取消运行',
+      'view.newTerminal': '新建终端',
+      'view.cycleSidebarGrouping': '循环切换会话分组',
+      'view.toggleHud': '切换 HUD 模式',
+      'view.nextTerminal': '下一个终端',
+      'view.prevTerminal': '上一个终端',
+      'view.closeTerminal': '关闭终端',
+      'hud.snapToPointer': '将 HUD 移至指针位置（全局，HUD 打开时）',
     }
+  ,
+    clear: '清除',
   },
 
   findInPage: {
@@ -528,6 +569,7 @@ export const zhOverrides = {
       keybinds: '键盘快捷键',
       keysTools: '工具',
       keysSettings: '设置',
+      keysMessage: '消息密钥',
       mcp: 'MCP',
       archivedChats: '已归档对话',
       sessions: '会话',
@@ -661,7 +703,7 @@ export const zhOverrides = {
         agentFailed: '智能体插件安装失败',
         installUncertain: 'Hermes 已停止等待安装结果，但插件可能仍在安装。关闭此窗口并刷新插件列表，然后再尝试安装。',
         desktopFailed: '桌面插件安装失败',
-        missingEnv: (_name, vars) => `缺少环境变量：${vars}。请在设置 → 密钥中添加。`,
+        missingEnv: (name, vars) => `${name} 缺少环境变量：${vars}。请在设置 → 密钥中添加。`,
         verified: '已验证',
         unverified: '未验证',
         reviewedByNous: '已由 Nous 审核。',
@@ -1576,6 +1618,34 @@ export const zhOverrides = {
       failedLoad: 'API 密钥加载失败',
       empty: '此类别暂时没有配置项。'
     },
+    messageKeys: {
+      enforcementPolicyTitle: '执行策略',
+      requireChatKeyTitle: '强制校验对话 API 密钥',
+      requireChatKeyDesc: '启用后，向 /message 发送的请求必须在请求头或 JSON 请求体中提供有效的 API 密钥。',
+      newKeyBannerTitle: '复制您的新消息密钥',
+      newKeyBannerDesc: '此密钥将永不再显示。请复制并妥善保管在安全位置。',
+      activeKeysTitle: (count: number) => `活跃密钥 (${count})`,
+      createKeyBtn: '创建密钥',
+      emptyKeys: '此 Profile 尚未创建任何消息密钥。',
+      createDialogTitle: '创建消息 API 密钥',
+      createDialogDesc: '为此密钥指定一个描述性标签或客户端名称（1–80 个字符）。',
+      keyNamePlaceholder: '例如 openclaw-gateway, router-node',
+      cancelBtn: '取消',
+      createBtn: '创建',
+      creatingBtn: '正在创建...',
+      revokeDialogTitle: '撤销消息密钥',
+      revokeDialogDesc: (name: string) => `确定要撤销密钥 "${name}" 吗？使用该密钥的应用程序将立即失去访问权限。`,
+      revokeBtn: '撤销',
+      revokingBtn: '正在撤销...',
+      copied: '已复制',
+      copy: '复制',
+      done: '完成',
+      keyCreatedToast: '消息 API 密钥创建成功',
+      keyRevokedToast: (name: string) => `密钥 "${name}" 已撤销`,
+      keyCopiedToast: '密钥已复制到剪贴板',
+      policyRequiredToast: '已启用消息 API 强制验证',
+      policyOptionalToast: '已将消息 API 设为可选验证',
+    },
     search: {
       placeholder: '搜索所有设置...',
       pill: '搜索'
@@ -2046,6 +2116,12 @@ export const zhOverrides = {
         needsSetupConfirmDescriptionGeneric:
           '此后端尚未完成设置。此更改生效后启动的会话在设置完成前将没有终端或文件工具。',
         needsSetupConfirmAction: '仍然选择'
+      ,
+        unavailableTitle: '终端命令不可用',
+        unavailableMessage: backend => `Hermes 目前无法运行 Shell 命令：${backend} 尚未就绪。请切换至“本地”，或完成 ${backend} 的设置后再试。`,
+        openBackendSettings: '打开终端设置',
+        useLocal: '使用本地',
+        switchedToLocal: '终端命令现已在本地运行。适用于新会话。',
       },
       browserRealProfile: {
         label: '使用我的真实浏览器配置文件',
@@ -2067,6 +2143,11 @@ export const zhOverrides = {
           enable: '使用我的配置文件'
         }
       }
+    ,
+      nousAuthTryAgain: '重试',
+      postSetupOpenLogs: '打开日志',
+      nousAuthFailedMessage: '请重试。',
+      postSetupRunAgain: '重新运行',
     }
   },
 
@@ -2192,6 +2273,28 @@ export const zhOverrides = {
       deepLinkCatalogInvalidName: '链接中的目录名称缺失或无效。',
       deepLinkCatalogUnknown: (name: string) => `“${name}”不在 Hermes 插件目录中。未安装任何内容。`,
       deepLinkCatalogUnavailable: '无法加载 Hermes 插件目录。请检查网络连接后重新打开链接。'
+    ,
+      settingsForm: {
+        save: '保存设置',
+        saved: (name: string) => `${name} 设置已保存。`,
+        saveFailed: (name: string) => `无法保存 ${name} 设置`,
+        secretSet: '•••••••• (已设置)',
+        secretStoredAs: (env: string) =>
+          `作为 ${env} 存储在 profile 的 .env 中，绝不保存在 config.yaml；留空以保留当前值。`,
+      },
+      serverStates: {
+        connected: '已连接',
+        app_not_running: '应用未运行',
+        endpoint_unavailable: '端点不可用',
+        no_interactive_session: '无交互式会话',
+        version_too_old: '版本过旧',
+        missing_app: '缺少应用',
+        unknown: '状态未知',
+      },
+      updateConsentTitle: (name: string) => `${name} 请求更多权限`,
+      updateConsentBody: (name: string, sha: string) => `${name} 的新目录固定版本 (${sha}) 新增了已安装版本所没有的交互面。仅在您信任它们时应用：`,
+      updateConsentConfirm: '应用更新',
+      settingsToggle: (name: string) => `设置：${name}`,
     },
     officialCatalog: '可安装',
     officialPill: '官方',
@@ -2246,6 +2349,12 @@ export const zhOverrides = {
       previewFailed: '技能预览失败',
       scanFailed: '安全扫描失败',
       searchFailed: '技能中心搜索失败'
+    ,
+      installBlockedTitle: name => `无法安装 ${name}`,
+      installBlockedMessage: (findings, unverified) =>
+        `安全扫描标记了 ${findings > 0 ? `${findings} 项${findings === 1 ? '' : ''}` : '风险模式'}待审查${unverified ? '，且该技能来自未验证来源' : ''}。在决定是否信任作者之前，请查看扫描结果。`,
+      viewScan: '查看扫描结果',
+      openLog: '打开日志',
     }
   },
 
@@ -2698,6 +2807,10 @@ export const zhOverrides = {
         '把 Hermes 暴露为兼容 OpenAI 的 API。设置一个鉴权密钥，然后把 Open WebUI / LobeChat 等指向 host:port。',
       webhook: '运行一个 HTTP 服务器，供其他工具 (GitHub、GitLab、自定义应用)POST。用 secret 验证签名。'
     }
+  ,
+    openLogs: '打开日志',
+    restartFailedManualDetail: '请再次尝试重启；如果仍然失败，请打开日志并发送诊断信息。',
+    restartAgain: '再次重启',
   },
 
   webhooks: {
@@ -2908,6 +3021,13 @@ export const zhOverrides = {
     failedSaveSoul: '保存 SOUL.md 失败',
     failedCreate: '创建配置档案失败',
     failedRename: '重命名配置档案失败'
+  ,
+    status: {
+      unread: (count: number) => (count === 1 ? '1 个未读会话' : `${count} 个未读会话`),
+      needsInput: (count: number) =>
+        count === 1 ? '1 个会话需要您的回复' : `${count} 个会话需要您的回复`,
+      working: (count: number) => (count === 1 ? '1 个会话正在运行' : `${count} 个会话正在运行`),
+    },
   },
 
   modelAssignment: {
@@ -3054,6 +3174,11 @@ export const zhOverrides = {
       emptyTitle: '没有可用的蓝图',
       emptyDesc: '此后端上没有可用的自动化蓝图。'
     }
+  ,
+    lastRunFailed: '上次运行失败：',
+    editJob: '编辑任务',
+    runAgain: '再次运行',
+    overdueSince: '逾期开始时间：',
   },
 
   artifacts: {
@@ -3253,6 +3378,14 @@ export const zhOverrides = {
       done: '已完成'
     },
     markAllRead: '全部标记为已读'
+  ,
+    storageCorrupt: {
+      title: '会话数据库已损坏',
+      body: (profiles: string) =>
+        `Hermes 无法读取 ${profiles} 的完整会话历史记录。此列表中缺失的聊天并未被删除，而是存储它们的文件已损坏。`,
+      action: '退出此配置文件中的 Hermes，然后在不修改文件的情况下检查该文件，或恢复快照：',
+      guide: '恢复指南',
+    },
   },
 
   composer: {
@@ -3518,6 +3651,8 @@ export const zhOverrides = {
         text: '请解释这是如何工作的，并指给我关键文件。'
       }
     }
+  ,
+    hiddenQueued: '设置备注',
   },
 
   statusStack: {
@@ -3816,6 +3951,9 @@ export const zhOverrides = {
     versionDetailsRuntimeExternal: '外部',
     versionDetailsInstallId: '安装 ID',
     versionDetailsUncommittedChanges: '未提交的变更'
+  ,
+    connectionSettings: '连接设置',
+    openDownloadPage: '打开下载页面',
   },
 
   install: {
@@ -3892,6 +4030,9 @@ export const zhOverrides = {
     copiedOutput: '已复制！',
     copyOutput: '复制输出',
     reloadRetry: '重新加载并重试'
+  ,
+    probeErrorDetails: '详情',
+    openLogs: '打开日志',
   },
 
   onboarding: zhOnboarding,
@@ -3944,7 +4085,25 @@ export const zhOverrides = {
       body: '你正在使用免费额度。继续使用 Hermes 的话，你会开始遇到限制。登录免费的 Nous 账户，即可获得更多额度。',
       signIn: '登录',
       notNow: '暂不'
-    }
+    },
+    setupFailed: {
+      tryAgain: '重试',
+      gateClosed: "此版本的 Hermes 需要 Nous 账户才能启动。请登录或创建账户，完全免费且只需一分钟。",
+      paused: '免登录使用 Hermes 暂时暂停。Hermes 会持续重试。登录完全免费，且可立即开始使用。',
+      rateLimited: wait =>
+        `当前使用人数较多，Hermes 将在 ${wait} 后重试。登录完全免费，且无需等待。`,
+      unreachable: "Hermes 无法连接到 Nous 服务。请检查网络连接，然后点击重试，或暂时连接其他服务商。",
+      serverError: 'Nous 服务出现了一点问题。请稍后点击重试，或暂时连接其他服务商。',
+      powRequired: "Nous 服务器要求进行工作量证明，但您的 Agent 尚未实现此功能。请登录或创建免费 Nous 账号以继续。",
+      locked: "此会话需要登录才能继续。请登录或创建免费 Nous 账号以继续。",
+      generic: "Hermes 无法在未登录的情况下配置免费访问。登录完全免费，您也可以连接其他服务商。",
+      signInBelow: '登录完全免费。请在下方选择 Nous。',
+      retrying: '正在重试…',
+    },
+    busyHeading: '即将完成',
+    busyBody: wait =>
+      `由于 Nous 服务繁忙，Hermes 无法完成登录。请在 ${wait} 后重试。在此期间，你的会话仍会保留在此处。`,
+    unreachableBody: "Hermes 无法连接到 Nous 服务以完成登录。请检查网络连接并重试。你的会话仍会保留在此处。",
   },
 
   modelPicker: {
@@ -3966,6 +4125,7 @@ export const zhOverrides = {
     priceTitle: '每百万 token 的输入/输出价格',
     wasPrice: '原价',
     customModel: '自定义模型',
+    moaPresets: 'MoA 预设',
     addCustomModelAction: '添加自定义模型…',
     customModelPlaceholder: '输入模型 ID，例如 openai/gpt-5'
   },
@@ -4417,6 +4577,12 @@ export const zhOverrides = {
         provider: 'AI 服务无法完成此请求。请稍后重试或切换服务商。',
         endpoint: 'Hermes 无法连接到你的自定义模型服务器。请确认它正在运行，然后重新发送消息。',
         streaming: '回复完成前连接已断开。请重试以重新发送。'
+      ,
+        auth: 'AI 服务拒绝了您的登录。请检查此服务商的凭据，然后重新发送消息。',
+        billing: '您的账户在此服务商处已无剩余额度。请充值或切换服务商，然后重新发送。',
+        disk: '磁盘空间已满，Hermes 无法保存此对话。请释放一些空间后重试。',
+        gateway: 'Hermes 在开始回复时遇到内部问题。请重新发送消息；如果问题持续出现，请发送诊断信息。',
+        runtime: 'Hermes 在开始回复时遇到内部问题。请重新发送消息；如果问题持续出现，请发送诊断信息。',
       },
       errorCodes: {
         provider_policy_blocked: {
@@ -4463,6 +4629,84 @@ export const zhOverrides = {
           title: '安全连接失败',
           body: provider => `Hermes 无法验证与 ${provider} 的安全连接。请检查网络或代理设置，或切换服务商后重新发送。`
         }
+      ,
+        billing: {
+          title: '额度不足',
+          body: provider => `您的 ${provider} 账户额度已用尽。请充值或切换服务商，然后重新发送。`,
+        },
+        stream_drop: {
+          title: '流式连接错误',
+          body: '回复完成前连接已断开。请重试以重新发送。',
+        },
+        disk_full: {
+          title: '磁盘已满',
+          body: '磁盘空间已满，Hermes 无法保存此对话。请清理一些空间后重试。',
+        },
+        auth: {
+          title: provider => `${provider} 拒绝了您的登录`,
+          body: provider => `保存的 ${provider} 凭据未被接受。请在“设置”中修正或切换服务商，然后重新发送消息。`,
+        },
+        auth_permanent: {
+          title: provider => `${provider} 拒绝了您的登录`,
+          body: provider => `保存的 ${provider} 凭据无效或已被撤销。请更新凭据或切换服务商，然后重新发送消息。`,
+        },
+        upstream_blocked: {
+          title: '防火墙拦截了请求',
+          body: provider => `${provider} 前端的防火墙或 CDN 在请求到达模型之前拦截了该请求——您的密钥可能没有问题。请在“设置”中通过该服务商的 extra_headers 设置 User-Agent 请求头，或切换服务商，然后重新发送消息。`,
+        },
+        context_overflow: {
+          title: '对话内容过长',
+          body: '对话内容已超出模型限制。请压缩对话或开启新会话，然后重新发送。',
+        },
+        payload_too_large: {
+          title: '此消息过大',
+          body: '请求内容超出该模型的处理限制。请压缩对话或开启新聊天，然后重新发送。',
+        },
+        model_not_found: {
+          title: '该模型不可用',
+          body: provider =>
+            `${provider} 未在您的账户中提供此模型。请选择其他模型，然后重新发送消息。`,
+        },
+        truncated: {
+          title: '回复被截断',
+          body: '模型在完成前停止生成。请重试以获取完整回复。',
+        },
+        loop_error: {
+          title: 'Hermes 陷入了循环',
+          body: '回复一直在重复相同的步骤，因此 Hermes 终止了该操作。请重试，如果再次发生请开启新聊天。',
+        },
+        SESSION_NOT_OWNED: {
+          title: '此聊天已在其他地方打开',
+          body: '此聊天当前已在另一个 Hermes 窗口或终端中打开。请在对应位置将其关闭后重新发送消息，或在此处开启新聊天。',
+        },
+        free_tier_disabled: {
+          title: '免登录使用 Hermes 功能当前已关闭',
+          body: '登录 Nous 账户即可继续聊天，完全免费。',
+        },
+        free_tier_rate_limited: {
+          title: "您未登录状态下的对话额度已用尽",
+          body: "额度很快会刷新。登录 Nous 账号可获得更多额度，完全免费。",
+        },
+        free_tier_at_capacity: {
+          title: '当前未登录对话服务非常繁忙',
+          body: "登录即可免排队（完全免费），或者稍后重试。",
+        },
+        free_tier_model_not_free: {
+          title: "未登录状态下无法使用该模型",
+          body: "Hermes 目前使用的是免费模型。登录 Nous 账号可使用更多模型，完全免费。",
+        },
+        free_tier_route: {
+          title: "Hermes 无法通过此路由连接到免费模型",
+          body: "登录 Nous 账号（完全免费），或检查 NOUS_INFERENCE_BASE_URL 设置。",
+        },
+        free_tier_outage: {
+          title: '免费模型暂时无法响应',
+          body: '请过一分钟后重试发送。',
+        },
+        free_tier_refused: {
+          title: "未登录时 Hermes 无法发送该内容",
+          body: '登录 Nous 账号完全免费。',
+        },
       },
       errorLayers: {
         auth: '认证错误',
@@ -4511,6 +4755,25 @@ export const zhOverrides = {
       goForward: '前进',
       sendEdited: '发送编辑后的消息',
       attachingFile: '正在附加…'
+    ,
+      errorDetails: '详情',
+      errorAuthKinds: {
+        api_key: {
+          title: provider => `${provider} 拒绝了您的 API 密钥`,
+          body: provider => `为 ${provider} 保存的密钥无效或已被撤销。请更新后重试。`,
+        },
+        oauth: {
+          title: provider => `您的 ${provider} 登录已过期`,
+        },
+      },
+      errorToastTitle: "Hermes 无法完成回复",
+      errorChooseModel: '选择模型',
+      errorCompressConversation: '压缩对话',
+      errorCompressFailed: '无法压缩对话',
+      errorOpenHermesFolder: '打开 Hermes 文件夹',
+      errorOpenHermesFolderFailed: '无法打开 Hermes 文件夹',
+      errorUpdateApiKey: '更新 API 密钥',
+      errorSignInFreeTier: '使用 Nous 账号登录',
     },
     approval: {
       gatewayDisconnected: 'Hermes 网关未连接',
@@ -4526,6 +4789,11 @@ export const zhOverrides = {
       alwaysDescription: pattern =>
         `这会将“${pattern}”模式加入永久允许列表 (~/.hermes/config.yaml)。Hermes 对类似命令将不再询问，包括当前会话和未来会话。`,
       alwaysAllow: '始终允许'
+    ,
+      reconnect: '重新连接',
+      timedOutSystemLine: '审批超时 — 命令未执行。请让 Hermes 重试，或在 设置 → 安全 → 审批超时 中调高上限。',
+      openSafetySettings: '打开安全设置',
+      commandDetails: '命令详情',
     },
     clarify: zhClarify,
     themePicker: zhThemePicker,
@@ -4698,6 +4966,8 @@ export const zhOverrides = {
     vaultCodeFootnote: '提示：在“设置 → 密码与登录”中为该登录保存验证器密钥后，Hermes 会自动填写验证码。',
     vaultCodeSkip: '跳过',
     vaultCodeConfirm: '输入验证码'
+  ,
+    reconnect: '重新连接',
   },
 
   desktop: {
@@ -4791,6 +5061,8 @@ export const zhOverrides = {
       systemNote: platform => `↻ 已移交到 ${platform} — 随时可在此处恢复。`,
       failed: error => `移交失败：${error}`,
       timedOut: '等待网关超时。`hermes gateway` 是否正在运行？'
+    ,
+      startMessaging: '开始发送消息',
     }
   },
 
@@ -4847,6 +5119,9 @@ export const zhOverrides = {
     boundaryDesc: '此视图遇到意外错误。你的对话和设置是安全的。',
     reloadWindow: '重新加载窗口',
     openLogs: '打开日志'
+  ,
+    boundaryDetails: '详情',
+    sendDiagnostics: '发送诊断信息',
   },
 
   ui: {
@@ -4871,6 +5146,268 @@ export const zhOverrides = {
       toggle: open => `${open ? '显示' : '隐藏'}侧边栏`
     }
   }
+,
+  connectorsPage: {
+    title: '连接器',
+    filterCategory: '分类',
+    categoryAll: '所有分类',
+    segment: {
+      all: '全部',
+      connected: '已连接',
+      available: '可用',
+      off: '已关闭',
+    },
+    group: {
+      connected: '已连接',
+      connectedNote: '异常连接排在最前。',
+      available: '可用',
+      off: '已关闭',
+      offNote: '登录状态已保留。',
+    },
+    card: {
+      state: {
+        accessExpired: '授权已过期',
+        connected: '已连接',
+        connecting: '连接中',
+        couldNotConnect: '连接失败',
+        serverConnecting: '正在连接…',
+        serverError: '错误',
+        serverNeedsAuth: '需要认证',
+        serverOff: '关',
+        serverOn: '开',
+        available: '可用',
+        connectionUnknown: '状态未知',
+        offByYourOrganisation: '已由您的组织关闭',
+        offForYou: '已对您关闭',
+        serverOnUnused: '已开启，未使用',
+      },
+      verb: {
+        authenticate: '认证',
+        connect: '连接',
+        install: '安装',
+        openLogs: '打开日志',
+        reconnect: '重新连接',
+        stopWaiting: '停止等待',
+        tryAgain: '重试',
+        turnBackOn: '重新开启',
+      },
+      kindManaged: '托管',
+      kindCatalog: 'MCP · 目录',
+      kindCustom: 'MCP · 自定义',
+      kindPlugin: (plugin: string) => `MCP · 插件 ${plugin}`,
+      inCatalog: '收录于 Hermes 目录',
+      hostedTwin: '提供托管版本',
+      alsoLocal: '也可在此设备上运行',
+      open: (name: string) => `打开 ${name}`,
+      turnServerOn: (name: string) => `开启 ${name}`,
+      turnServerOff: (name: string) => `关闭 ${name}`,
+      fact: {
+        tools: (count: number) => `${count} 个工具${count === 1 ? '' : ''}`,
+        toolsOff: (count: number) => `${count} 个工具已关闭${count === 1 ? '' : ''}`,
+        toolsOn: (count: number) => `${count} 个工具已开启${count === 1 ? '' : ''}`,
+        toolsSomeOn: (total: number, on: number) => `${total} 个工具，${on} 个已开启`,
+      },
+      reason: {
+        finishSignIn: '请在浏览器中完成登录。',
+        reconnect: '重新连接以保持此应用正常运行。',
+        serverError: '服务器拒绝了连接。',
+        serverNeedsAuth: '登录以允许此服务器响应。',
+      },
+    },
+    page: {
+      noMatchTitle: '没有匹配的应用',
+      retry: '重试',
+      signIn: '登录',
+      loading: '正在读取目录和此计算机上的服务器',
+      emptyTitle: '暂无应用。在此计算机上添加服务器即可开始使用。',
+      noMatchBody: '此处没有匹配项。将 Hermes 指向你自己的 MCP 服务器即可添加。',
+      clearSearch: '清除搜索',
+      hostedFailedTitle: '无法连接到托管应用。',
+      hostedFailedBody: '此计算机上的服务器未受影响，仍在运行。未关闭任何内容。',
+      matchesElsewhere: (count: number) => `其他分组中还有 ${count} 个匹配项。`,
+      showAllMatches: '显示所有匹配项',
+      segmentNoMatch: (segment: string) => `${segment} 中没有匹配项，因此显示所有匹配项。`,
+      freeTierNote: '在登录之前，连接将保留在此计算机上。',
+      signInLine: '登录 Nous 以使用托管应用。',
+      managedUnavailable: '此账户暂不支持托管应用。',
+      writeFailed: '该更改未保存。',
+      refreshFailed: '工具列表未能刷新。',
+      disconnectNoAccount: 'Hermes 此处没有可断开连接的账户。请刷新页面后重试。',
+      disconnectRefused: 'Nous 暂时无法移除此登录信息。请改用开关关闭应用，或稍后重试。',
+    },
+    add: {
+      name: '名称',
+      url: 'URL',
+      authNone: '无',
+      action: '添加自定义',
+      title: '连接到自定义 MCP',
+      hint: '此设备上 mcp.json 中的一个新条目',
+      pasteLabel: '粘贴命令或代码片段',
+      pastePlaceholder: 'npx -y @modelcontextprotocol/server-filesystem /path/to/dir',
+      pasteNoMatch: '未识别出任何服务器信息。请改为填写下方字段。',
+      nameTaken: '该名称已被使用。',
+      type: '类型',
+      typeStdio: 'STDIO',
+      typeHttp: '流式 HTTP',
+      command: '启动命令',
+      args: '参数',
+      addArg: '+ 添加参数',
+      envVars: '环境变量',
+      addEnvVar: '+ 添加环境变量',
+      passthrough: '环境变量透传',
+      addPassthrough: '+ 添加变量',
+      cwd: '工作目录',
+      headers: '请求头',
+      addHeader: '+ 添加请求头',
+      auth: '认证',
+      authOauth: 'OAuth',
+      authBearer: 'Bearer 令牌',
+      keyPlaceholder: '键',
+      valuePlaceholder: '值',
+      removeRow: '删除此行',
+      editJson: '编辑 mcp.json',
+      saveFailed: '未能保存该服务器。',
+    },
+    dialog: {
+      disconnect: '断开连接',
+      moreActions: '更多操作',
+      advanced: '高级',
+      disconnectTitle: (name: string) => `断开与 ${name} 的连接？`,
+      disconnectBody: 'Hermes 将停止以此账户身份执行操作。你可以随时重新连接。',
+      menuRefreshTools: '刷新工具',
+      removeServerTitle: (name: string) => `移除 ${name}？`,
+      removeServerBody: '该条目将从这台电脑上的 mcp.json 中移除。不会删除其他任何内容。',
+      appSwitch: (name: string) => `Hermes 可以使用 ${name}`,
+      waysTitle: (name: string) => `${name} 的运行位置`,
+      wayNotConnected: (name: string) => `尚未连接。请在浏览器中登录 ${name}。`,
+      wayHosted: '托管',
+      bothOn: (name: string) => `两者均已开启，因此 Hermes 会看到每个 ${name} 工具两次。`,
+      turnOffLocal: '关闭本地服务器',
+      providedByPlugin: (plugin: string) => `由插件 ${plugin} 提供`,
+      openPlugins: '打开插件标签页',
+      nousLine: 'Nous 应用跟随您的账户，而非配置文件。',
+      rulesReadOnly: '当前无法修改规则。',
+      rulesAppOff: (name: string) => `开启 ${name} 以更改其工具。`,
+      rulesSignIn: '登录以更改 Hermes 在此可执行的操作。',
+      orgNote: (count: number) => `您的组织已关闭 ${count} 个工具。`,
+      orgLink: '打开连接器管理',
+      connectEnded: '登录未完成。',
+      connectOpenAgain: '重新打开链接',
+      tokensPerCall: '每次调用 Token 数',
+      usesPerMonth: '30 天内使用次数',
+      advancedHint: 'mcp.json 条目和日志',
+    },
+    tools: {
+      title: '工具',
+      retry: '重试',
+      remove: '移除',
+      save: '保存更改',
+      saving: '保存中…',
+      notInstalledBody: '在当前设备上安装以查看其提供的工具。',
+      summaryTitle: (name: string) => `Hermes 可使用 ${name} 执行的操作`,
+      summaryPreviewTitle: (name: string) => `连接后 Hermes 可使用 ${name} 执行的操作`,
+      summaryCount: (count: number) => `${count} 个工具`,
+      summaryAllTools: '所有工具',
+      summaryOther: '其他',
+      allToolsSwitch: '开启或关闭所有工具',
+      summaryAllOn: '全部开启',
+      summarySomeOn: (on: number, total: number) => `${on}/${total} 已开启`,
+      summaryOff: '已关闭',
+      showAllTools: (count: number) => `显示全部 ${count} 个工具${count === 1 ? '' : ''}`,
+      showSummary: '显示摘要',
+      facetSwitch: (facet: string) => `开启或关闭 ${facet} 工具`,
+      moreHints: (count: number) => `+${count}`,
+      staleSignIn: '登录以查看最新的工具列表。',
+      searchCountPlaceholder: (count: number) => `搜索 ${count} 个工具`,
+      toolList: (name: string) => `${name} 工具`,
+      categorySelect: (count: number) => `${count} 个分类`,
+      showDeprecated: (count: number) => `显示 ${count} 个已弃用项`,
+      hideDeprecated: (count: number) => `隐藏 ${count} 个已弃用项`,
+      quickReadOnly: '只读',
+      quickNoDestructive: '关闭破坏性工具',
+      quickEverythingOn: '全部开启',
+      lockedHint: '已由您的组织关闭',
+      turnToolOn: (tool: string) => `开启 ${tool}`,
+      turnToolOff: (tool: string) => `关闭 ${tool}`,
+      showDetails: (tool: string) => `显示 ${tool} 的功能`,
+      hideDetails: (tool: string) => `隐藏 ${tool} 的功能`,
+      noMatch: '没有符合这些筛选条件的工具。',
+      loading: '正在读取工具列表',
+      unavailableLine: '工具列表不可用。',
+      needsAuthTitle: (name: string) => `登录 ${name} 以查看其工具。`,
+      needsAuthBody: '登录信息保留在此计算机上，不会离开本地。',
+      goneTitle: (name: string) => `${name} 已离开目录。`,
+      goneBody: 'Hermes 无法再调用它。该行将一直保留，直到您将其移除，因此不会有任何内容凭空消失。',
+      offTitle: (name: string) => `${name} 已关闭。`,
+      offBody: '使用上方的开关将其开启，以查看其提供的工具。',
+      signedOutTitle: '登录 Nous 以查看工具列表。',
+      signedOutBody: '您在此计算机上的服务器不受影响。',
+      conflictTitle: '在您编辑期间，有人修改了此规则。',
+      conflictBody: (theyOff: number, theyOn: number) => {
+        const they = [
+          theyOff > 0 ? `关闭了您已开启的 ${theyOff} 个工具${theyOff === 1 ? '' : ''}` : '',
+          theyOn > 0 ? `保持开启了您已关闭的 ${theyOn} 个工具${theyOn === 1 ? '' : ''}` : ''
+        ].filter(Boolean)
+
+        return `${they.length > 0 ? `对方${they.join('，并')}。` : ''}您的修改仍保留在屏幕上；未写入任何内容。`
+      },
+      conflictReload: '重新加载对方的版本',
+      conflictSave: '覆盖对方版本保存',
+      saveFailed: '这些工具规则未保存。',
+      footerDirty: (off: number, backOn: number) =>
+        `${off} 个工具已关闭${off === 1 ? '' : ''}，${backOn === 0 ? '0' : backOn} 个重新开启`,
+      discard: '放弃',
+    },
+    vocabulary: {
+      facetRead: {
+        label: '已读取',
+        long: '从此应用中读取数据。不会更改任何内容。',
+      },
+      hintUpdate: {
+        label: '更新',
+        long: '修改现有内容。',
+      },
+      facetWrite: {
+        label: '写入',
+        long: '在此应用中创建或更改内容。',
+      },
+      facetDestructive: {
+        label: '破坏性',
+        long: '可永久删除此应用中的内容。',
+      },
+      facetUnclassified: {
+        label: '未知影响',
+        long: '此应用未说明此工具的作用。',
+      },
+      hintReadOnly: {
+        label: '只读',
+        long: '该工具声明其仅执行读取操作。',
+      },
+      hintCreate: {
+        label: '创建',
+        long: '创建新内容。',
+      },
+      hintDelete: {
+        label: '删除',
+        long: '移除内容。',
+      },
+      hintDestructive: {
+        label: '破坏性',
+        long: '其所做的更改无法在此处撤销。',
+      },
+      hintIdempotent: {
+        label: '可重复',
+        long: '运行两次与运行一次的效果相同。',
+      },
+      hintOpenWorld: {
+        label: '外部',
+        long: '访问此应用外部的内容。',
+      },
+    },
+    searchPlaceholder: (count: number) => `搜索 ${count} 个应用`,
+    uncategorised: '未分类',
+    residencyLocal: '在此设备上',
+  },
 } satisfies TranslationOverrides
 
 export const zh = defineLocale(zhOverrides)

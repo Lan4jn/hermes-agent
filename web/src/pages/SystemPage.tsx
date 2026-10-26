@@ -71,6 +71,8 @@ import type {
   GatewayMigratePlan,
 } from "@/lib/api";
 import { apiErrorFromResponse, errorMessage } from "@/lib/api-error";
+import { useI18n } from "@/i18n";
+import { systemPageEn } from "@/i18n/pagesEn";
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -215,6 +217,8 @@ const MEMORY_STATUS_TONE: Record<
 };
 
 export default function SystemPage() {
+  const { t } = useI18n();
+  const text = t.systemPage ?? systemPageEn;
   const { toast, showToast } = useToast();
 
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -909,21 +913,21 @@ export default function SystemPage() {
       {/* ── Host / system stats ───────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Server className="h-4 w-4" /> Host
+          <Server className="h-4 w-4" /> {text.host ?? "Host"}
         </H2>
         <Card>
           <CardContent className="py-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-6 text-sm">
               <div>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">OS</div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">{text.statOs ?? "OS"}</div>
                 <div>{stats?.os} {stats?.os_release}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">Arch</div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">{text.statArch ?? "Arch"}</div>
                 <div>{stats?.arch}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">Host</div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">{text.statHost ?? "Host"}</div>
                 <div className="truncate">{stats?.hostname}</div>
               </div>
               <div>
@@ -1041,7 +1045,7 @@ export default function SystemPage() {
       {/* ── Portal ────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Globe className="h-4 w-4" /> Nous Portal
+          <Globe className="h-4 w-4" /> {text.nousPortal ?? "Nous Portal"}
         </H2>
         <Card>
           <CardContent className="flex flex-col gap-3 py-4">
@@ -1088,7 +1092,7 @@ export default function SystemPage() {
       {/* ── Curator ───────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Sparkles className="h-4 w-4" /> Skill curator
+          <Sparkles className="h-4 w-4" /> {text.skillCurator ?? "Skill curator"}
         </H2>
         <Card>
           <CardContent className="flex items-center justify-between py-4">
@@ -1121,7 +1125,7 @@ export default function SystemPage() {
       {/* ── Gateway ───────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Power className="h-4 w-4" /> Gateway
+          <Power className="h-4 w-4" /> {text.gateway ?? "Gateway"}
         </H2>
         <Card>
           <CardContent className="flex items-center justify-between py-4">
@@ -1202,7 +1206,7 @@ export default function SystemPage() {
       {/* ── Memory ────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Brain className="h-4 w-4" /> Memory
+          <Brain className="h-4 w-4" /> {text.memory ?? "Memory"}
         </H2>
         <Card>
           <CardContent className="flex flex-col gap-4 py-4">
@@ -1260,7 +1264,7 @@ export default function SystemPage() {
       {/* ── Credential pool ───────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <KeyRound className="h-4 w-4" /> Credential pool
+          <KeyRound className="h-4 w-4" /> {text.credentialPool ?? "Credential pool"}
         </H2>
         <Card>
           <CardContent className="flex flex-col gap-4 py-4">
@@ -1313,30 +1317,30 @@ export default function SystemPage() {
       {/* ── Operations ────────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Activity className="h-4 w-4" /> Operations
+          <Activity className="h-4 w-4" /> {text.operations ?? "Operations"}
         </H2>
         <Card>
           <CardContent className="flex flex-wrap gap-2 py-4">
             <Button size="sm" ghost prefix={<Terminal className="h-3.5 w-3.5" />} onClick={() => setConsoleOpen(true)}>
-              Open console
+              {text.openConsole ?? "Open console"}
             </Button>
             <Button size="sm" ghost prefix={<Stethoscope className="h-3.5 w-3.5" />} onClick={() => runOp(api.runDoctor, "Doctor")}>
-              Run doctor
+              {text.runDoctor ?? "Run doctor"}
             </Button>
             <Button size="sm" ghost prefix={<ShieldCheck className="h-3.5 w-3.5" />} onClick={() => runOp(api.runSecurityAudit, "Security audit")}>
-              Security audit
+              {text.securityAudit ?? "Security audit"}
             </Button>
             <Button size="sm" ghost prefix={<RotateCw className="h-3.5 w-3.5" />} onClick={() => runOp(api.updateSkillsFromHub, "Skills update")}>
-              Update skills
+              {text.updateSkills ?? "Update skills"}
             </Button>
             <Button size="sm" ghost prefix={<Activity className="h-3.5 w-3.5" />} onClick={() => runOp(api.runPromptSize, "Prompt size")}>
-              Prompt size
+              {text.promptSize ?? "Prompt size"}
             </Button>
             <Button size="sm" ghost prefix={<Database className="h-3.5 w-3.5" />} onClick={() => runOp(api.runDump, "Support dump")}>
-              Support dump
+              {text.supportDump ?? "Support dump"}
             </Button>
             <Button size="sm" ghost prefix={<RotateCw className="h-3.5 w-3.5" />} onClick={() => runOp(api.runConfigMigrate, "Config migrate")}>
-              Migrate config
+              {text.migrateConfig ?? "Migrate config"}
             </Button>
           </CardContent>
         </Card>
@@ -1345,7 +1349,7 @@ export default function SystemPage() {
           <CardContent className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
               <div className="grid min-w-0 flex-1 gap-2">
-                <Label>Full backup</Label>
+                <Label>{text.fullBackup ?? "Full backup"}</Label>
                 <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
                   <Button
                     size="sm"
@@ -1353,7 +1357,7 @@ export default function SystemPage() {
                     prefix={<Database className="h-3.5 w-3.5" />}
                     onClick={() => void runDashboardBackup()}
                   >
-                    Create backup
+                    {text.createBackup ?? "Create backup"}
                   </Button>
                   <Button
                     size="sm"
@@ -1589,7 +1593,7 @@ export default function SystemPage() {
       {/* ── Checkpoints ───────────────────────────────────────────── */}
       <section className="flex flex-col gap-3">
         <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-          <Database className="h-4 w-4" /> Checkpoints
+          <Database className="h-4 w-4" /> {text.checkpoints ?? "Checkpoints"}
         </H2>
         <Card>
           <CardContent className="flex items-center justify-between py-4">
@@ -1608,7 +1612,7 @@ export default function SystemPage() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <H2 variant="sm" className="flex items-center gap-2 text-muted-foreground">
-            <Terminal className="h-4 w-4" /> Shell hooks
+            <Terminal className="h-4 w-4" /> {text.hooks ?? "Shell hooks"}
           </H2>
           <Button size="sm" className="uppercase" prefix={<Plus className="h-3.5 w-3.5" />} onClick={() => setHookModalOpen(true)}>
             New hook

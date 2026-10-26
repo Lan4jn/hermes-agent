@@ -642,6 +642,15 @@ def _resolve_named_custom_runtime(*, requested_provider: str, explicit_api_key: 
         requested_norm = "custom"
     if requested_norm == "custom" and explicit_base_url:
         return _resolve_direct_alias_runtime(requested_provider, explicit_api_key, explicit_base_url)
+    if requested_norm == "custom":
+        cfg_model = config.get("model") if isinstance(config, dict) else None
+        if isinstance(cfg_model, dict):
+            configured_base_url = str(cfg_model.get("base_url") or "").strip()
+        else:
+            configured_base_url = str(rp._get_model_config().get("base_url") or "").strip()
+        canonical = rp.find_custom_provider_identity(configured_base_url)
+        if canonical:
+            requested_provider = canonical
     if custom_provider is None:
         custom_provider = (rp._get_named_custom_provider(requested_provider) if config is None
                            else _get_named_custom_provider(requested_provider, config=config))

@@ -206,6 +206,9 @@ class TestAdapterInit:
         adapter = APIServerAdapter(config)
         assert adapter._host == "127.0.0.1"
         assert adapter._api_key == ""
+        assert adapter._allow_remote is False
+        assert adapter._message_api_enabled is True
+        assert adapter._message_api_allow_command_execution is False
         assert adapter.platform == Platform.API_SERVER
 
 
@@ -381,13 +384,15 @@ class TestRuntimeStatusMetrics:
 # ---------------------------------------------------------------------------
 
 
-def _make_adapter(api_key: str = "", cors_origins=None) -> APIServerAdapter:
+def _make_adapter(api_key: str = "", cors_origins=None, message_api=None) -> APIServerAdapter:
     """Create an adapter with optional API key."""
     extra = {}
     if api_key:
         extra["key"] = api_key
     if cors_origins is not None:
         extra["cors_origins"] = cors_origins
+    if message_api is not None:
+        extra["message_api"] = message_api
     config = PlatformConfig(enabled=True, extra=extra)
     return APIServerAdapter(config)
 
@@ -411,6 +416,9 @@ def _create_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_post("/v1/responses", adapter._handle_responses)
     app.router.add_get("/v1/responses/{response_id}", adapter._handle_get_response)
     app.router.add_delete("/v1/responses/{response_id}", adapter._handle_delete_response)
+    app.router.add_post("/message", adapter._handle_message_api)
+    app.router.add_get("/api/message/sessions", adapter._handle_list_message_sessions)
+    app.router.add_get("/api/message/sessions/{session_id}", adapter._handle_get_message_session)
     app.router.add_post(
         "/api/platforms/{platform}/events",
         adapter._handle_platform_event_callback,
@@ -2502,6 +2510,427 @@ class TestSessionKeyHeader:
     gateway's session_key / session_id split.
     """
 
+    @pytest.mark.asyncio
+    async def test_session_key_passed_to_agent_and_echoed(self, auth_adapter):
+        """X-Hermes-Session-Key reaches _run_agent as gateway_session_key and is echoed back."""
+        mock_result = {"final_response": "ok", "messages": [], "api_calls": 1}
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Hermes-Session-Key": "webui:user-42",
+                        "Authorization": "Bearer sk-secret",
+                    },
+                    json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
+                )
+            assert resp.status == 200
+            assert resp.headers.get("X-Hermes-Session-Key") == "webui:user-42"
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["gateway_session_key"] == "webui:user-42"
+
+    @pytest.mark.asyncio
+    async def test_session_key_independent_of_session_id(self, auth_adapter):
+        """Both headers coexist: key scopes memory, id scopes transcript."""
+        mock_result = {"final_response": "ok", "messages": [], "api_calls": 1}
+        mock_db = MagicMock()
+        mock_db.get_messages_as_conversation.return_value = []
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Hermes-Session-Key": "channel-abc",
+                        "X-Hermes-Session-Id": "transcript-xyz",
+                        "Authorization": "Bearer sk-secret",
+                    },
+                    json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
+                )
+            assert resp.status == 200
+            assert resp.headers.get("X-Hermes-Session-Key") == "channel-abc"
+            assert resp.headers.get("X-Hermes-Session-Id") == "transcript-xyz"
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["gateway_session_key"] == "channel-abc"
+            assert call_kwargs["session_id"] == "transcript-xyz"
+
+    @pytest.mark.asyncio
+    async def test_session_key_absent_yields_none(self, auth_adapter):
+        """Omitting the header passes gateway_session_key=None and doesn't echo."""
+        mock_result = {"final_response": "ok", "messages": [], "api_calls": 1}
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer sk-secret"},
+                    json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
+                )
+            assert resp.status == 200
+            assert "X-Hermes-Session-Key" not in resp.headers
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["gateway_session_key"] is None
+
+    @pytest.mark.asyncio
+    async def test_session_key_rejected_without_api_key(self, adapter):
+        """Without API_SERVER_KEY, accepting a caller-supplied memory scope is unsafe — reject with 403."""
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.post(
+                "/v1/chat/completions",
+                headers={"X-Hermes-Session-Key": "whatever"},
+                json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            assert resp.status == 403
+
+
+# ---------------------------------------------------------------------------
+# /message endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestMessageAPIEndpoint:
+    @pytest.mark.asyncio
+    async def test_message_api_enabled_by_default(self, auth_adapter):
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    {"final_response": "hi", "messages": [], "api_calls": 1},
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                resp = await cli.post("/message", json={"message": "hi"})
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["reply"] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_message_request_returns_reply_and_session(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        app = _create_app(auth_adapter)
+        mock_result = {"final_response": "Hello from Hermes", "messages": [], "api_calls": 1}
+
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                resp = await cli.post(
+                    "/message",
+                    json={
+                        "session_id": "peer-session",
+                        "sender_id": "peer-a",
+                        "sender_display_name": "Peer A",
+                        "message": "hello",
+                    },
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["session_id"] == "peer-session"
+                assert data["reply"] == "Hello from Hermes"
+                assert data["command"]["requested"] is False
+                call_kwargs = mock_run.call_args.kwargs
+                assert call_kwargs["user_message"] == "hello"
+                assert call_kwargs["session_id"] is None
+                assert call_kwargs["gateway_session_key"] == "message_api:peer-session"
+                assert call_kwargs["bind_declared_conversation"] is True
+                assert call_kwargs["turn_author"] == {
+                    "id": "message_api:peer-a", "name": "Peer A", "is_bot": False,
+                }
+
+    @pytest.mark.asyncio
+    async def test_message_command_with_api_key_issues_exec_token_and_executes(self):
+        adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={
+                "enabled": True,
+                "allow_command_execution": True,
+                "api_keys": ["node-key-1"],
+                "token_ttl_seconds": 3600,
+            },
+        )
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_execute_message_api_command") as mock_exec:
+                mock_exec.return_value = {
+                    "output": "hello\n",
+                    "exit_code": 0,
+                    "error": "",
+                    "status": "completed",
+                }
+                resp = await cli.post(
+                    "/message",
+                    json={"command": "echo hello", "api_key": "node-key-1"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["exec_token"]
+                assert data["exec_token_expires_at"]
+                assert data["command"]["requested"] is True
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                assert data["command"]["output"] == "hello"
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_accepts_bearer_auth_without_body_api_key(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                mock_exec.return_value = {
+                    "output": "ok",
+                    "exit_code": 0,
+                    "error": "",
+                    "status": "completed",
+                }
+                resp = await cli.post(
+                    "/message",
+                    headers={"Authorization": "Bearer sk-secret"},
+                    json={"command": "pwd"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_rejects_unauthorized_exec(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    json={"command": "rm -rf /tmp/example"},
+                )
+                assert resp.status == 401
+                data = await resp.json()
+                assert data["command"]["requested"] is True
+                assert data["command"]["authorized"] is False
+                assert "requires" in data["command"]["error"]
+                mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_message_command_disabled_by_default(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command") as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"Authorization": "Bearer sk-secret"},
+                    json={"command": "pwd"},
+                )
+                assert resp.status == 403
+                data = await resp.json()
+                assert data["command"]["requested"] is True
+                assert data["command"]["executed"] is False
+                assert "disabled" in data["command"]["error"].lower()
+                mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_message_command_authorized_by_header_api_key(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command", return_value={"output": "root", "exit_code": 0}) as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"X-Hermes-Api-Key": "node-key-1"},
+                    json={"command": "whoami"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                assert data["command"]["output"] == "root"
+                assert "exec_token" in data
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_command_authorized_by_header_exec_token(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "allow_command_execution": True, "api_keys": ["node-key-1"]},
+        )
+        token, _ = auth_adapter._message_token_store.issue(auth_adapter._message_home(), 60)
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_execute_message_api_command", return_value={"output": "ok", "exit_code": 0}) as mock_exec:
+                resp = await cli.post(
+                    "/message",
+                    headers={"X-Hermes-Exec-Token": token},
+                    json={"command": "date"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["command"]["authorized"] is True
+                assert data["command"]["executed"] is True
+                mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_shared_memory_notes_records_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "shared_memory_notes_enabled": True},
+        )
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", return_value=({"final_response": "Hello back!", "session_id": "s-1"}, {})):
+                resp = await cli.post(
+                    "/message",
+                    json={"message": "Hello from Node B", "sender_id": "node-b", "sender_display_name": "Node B"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["reply"] == "Hello back!"
+
+        notes_dir = tmp_path / "memories" / "node_messages"
+        assert notes_dir.exists()
+        files = list(notes_dir.glob("*.md"))
+        assert len(files) == 1
+        content = files[0].read_text(encoding="utf-8")
+        assert "Hello from Node B" in content
+        assert "Hello back!" in content
+        assert "Node B" in content
+
+
+# ---------------------------------------------------------------------------
+# /api/message/sessions endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestMessageAPISessionEndpoints:
+    @pytest.mark.asyncio
+    async def test_list_message_sessions_filters_marker_sessions(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        mock_db = MagicMock()
+        mock_db.list_sessions_rich.return_value = [
+            {
+                "id": "sess-a",
+                "source": "api_server",
+                "user_id": "message_api:peer-a",
+                "session_key": "message_api:peer-a",
+                "title": None,
+                "preview": "hello",
+                "message_count": 2,
+                "started_at": 1_700_000_000,
+                "last_active": 1_700_000_010,
+            },
+            {
+                "id": "sess-b",
+                "source": "api_server",
+                "user_id": "plain-user",
+                "title": None,
+                "preview": "ignore me",
+                "message_count": 1,
+                "started_at": 1_700_000_100,
+                "last_active": 1_700_000_110,
+            },
+        ]
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get(
+                "/api/message/sessions",
+                headers={"Authorization": "Bearer sk-secret"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert len(data) == 1
+            assert data[0]["id"] == "sess-a"
+            assert data[0]["preview"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_get_message_session_returns_visible_messages(self, auth_adapter):
+        auth_adapter = _make_adapter(
+            api_key="sk-secret",
+            message_api={"enabled": True, "webui_history_enabled": True},
+        )
+        mock_db = MagicMock()
+        mock_db.get_session.return_value = {
+            "id": "sess-a",
+            "source": "api_server",
+            "user_id": "message_api:peer-a",
+            "session_key": "message_api:peer-a",
+            "started_at": 1_700_000_000,
+        }
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+            {"role": "tool", "content": '{"ok":true}'},
+        ]
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get(
+                "/api/message/sessions/sess-a",
+                headers={"Authorization": "Bearer sk-secret"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["id"] == "sess-a"
+            assert data["messages"] == [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "world"},
+            ]
+
+    @pytest.mark.asyncio
+    async def test_session_key_rejects_control_chars(self, auth_adapter):
+        """Header injection via \\r\\n must be rejected by the server-side validator.
+
+        Note: aiohttp client refuses to SEND a header containing CR/LF
+        (that check fires before the request leaves the client), so we
+        can't reach this code path through TestClient.  Test the helper
+        directly instead with a raw request that bypasses client-side
+        validation.
+        """
+        mock_request = MagicMock()
+        mock_request.headers = {"X-Hermes-Session-Key": "bad\rvalue"}
+        key, err = auth_adapter._parse_session_key_header(mock_request)
+        assert key is None
+        assert err is not None
+        assert err.status == 400
+
+    @pytest.mark.asyncio
+    async def test_session_key_rejects_oversized(self, auth_adapter):
+        """Session keys longer than the cap are rejected."""
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.post(
+                "/v1/chat/completions",
+                headers={"X-Hermes-Session-Key": "x" * 1000, "Authorization": "Bearer sk-secret"},
+                json={"model": "hermes-agent", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            assert resp.status == 400
+
 
     @pytest.mark.asyncio
     async def test_session_key_threads_into_create_agent(self, auth_adapter):
@@ -3167,3 +3596,25 @@ class TestCreateAgentModelRecovery:
         )
         adapter._create_agent(session_id="s2", gateway_session_key="ch")
         assert captured[1]["model"] == "anthropic/claude-opus-4.6"
+
+
+class TestDirectModeAgentCreation:
+    def test_direct_mode_disables_tools_and_enables_skips(self, monkeypatch):
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        _patch_create_agent_runtime(monkeypatch, captured, FakeAgent)
+        adapter = APIServerAdapter(PlatformConfig(enabled=True))
+        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
+        monkeypatch.setattr(adapter, "_session_model_override_for", lambda *_: None)
+
+        adapter._create_agent(session_id="s1", agent_mode="direct")
+
+        assert captured["enabled_toolsets"] == []
+        assert captured["max_iterations"] == 1
+        assert captured["skip_context_files"] is True
+        assert captured["skip_memory"] is True
+        assert captured["skip_background_review"] is True

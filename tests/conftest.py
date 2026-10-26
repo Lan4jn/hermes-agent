@@ -271,6 +271,9 @@ def _hermetic_environment(tmp_path, tmp_path_factory, monkeypatch):
     for name in _HERMES_BEHAVIORAL_VARS:
         monkeypatch.delenv(name, raising=False)
 
+    for proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
+        monkeypatch.delenv(proxy_var, raising=False)
+
     # Honcho's fallback host/config resolution legitimately reads the user's
     # global ~/.honcho/config.json. Keep HOME stable (subprocess tests depend
     # on it), but pin the host so ordinary tests cannot inherit a developer's

@@ -669,6 +669,76 @@ def test_openrouter_key_takes_priority_over_openai_key(monkeypatch):
     assert resolved["api_key"] == "sk-or-should-win"
 
 
+def test_get_model_config_preserves_mapping_fields(monkeypatch):
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "model": {
+                "default": "gemini-3.8-flash-high",
+                "provider": "custom",
+                "base_url": "http://custom-gateway.example:8045/v1",
+                "api_mode": "codex_responses",
+            }
+        },
+    )
+
+    assert rp._get_model_config() == {
+        "default": "gemini-3.8-flash-high",
+        "provider": "custom",
+        "base_url": "http://custom-gateway.example:8045/v1",
+        "api_mode": "codex_responses",
+    }
+
+
+def test_bare_custom_config_route_preempts_auto_detected_provider(monkeypatch):
+    """A configured custom route must not be replaced by an unrelated credential pool."""
+    config = {
+        "model": {
+            "provider": "custom",
+            "default": "gemini-3.8-flash-high",
+            "base_url": "http://custom-gateway.example:8045/v1",
+            "api_key": "sk-custom-gateway",
+            "api_mode": "codex_responses",
+        },
+        "custom_providers": [
+            {
+                "name": "Custom Gateway",
+                "base_url": "http://custom-gateway.example:8045/v1",
+                "api_key": "sk-custom-gateway",
+                "model": "gemini-3.8-flash-high",
+                "api_mode": "codex_responses",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: config["model"],
+    )
+    monkeypatch.setattr(rp, "load_config", lambda: config)
+    monkeypatch.setattr(
+        rp,
+        "get_compatible_custom_providers",
+        lambda _config=None: config["custom_providers"],
+    )
+    monkeypatch.setattr(
+        rp,
+        "resolve_provider",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bare custom must resolve before provider auto-detection")
+        ),
+    )
+    monkeypatch.setattr(rp, "_try_resolve_from_custom_pool", lambda *_args, **_kwargs: None)
+
+    resolved = rp.resolve_runtime_provider(requested="custom")
+
+    assert resolved["provider"] == "custom"
+    assert resolved["base_url"] == "http://custom-gateway.example:8045/v1"
+    assert resolved["api_key"] == "sk-custom-gateway"
+    assert resolved["api_mode"] == "codex_responses"
+
+
 def test_openai_key_used_when_no_openrouter_key(monkeypatch):
     """A legacy OpenRouter key (sk-or-) kept in OPENAI_API_KEY is the fallback when
     OPENROUTER_API_KEY is not set."""
@@ -2279,3 +2349,36 @@ def test_configured_key_env_resolving_empty_is_logged(monkeypatch, caplog):
         assert rp.resolve_runtime_provider(requested="custom:local")["api_key"] == "no-key-required"
     hits = [r for r in caplog.records if "UNSET_LLM_KEY" in r.getMessage()]
     assert len(hits) == 1 and "scw" in hits[0].getMessage()
+
+
+def test_resolve_named_custom_runtime_uses_passed_config_base_url(monkeypatch):
+    """_resolve_named_custom_runtime must respect the passed config for custom identity,
+    never leaking the global default model config (#P1-2)."""
+    from hermes_cli import runtime_provider as rp
+    from hermes_cli import runtime_provider_custom as rpc
+
+    # Global config has a different base_url
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {"base_url": "https://global.example.com/v1"})
+    custom_endpoint = "https://isolated-custom.example.com/v1"
+    monkeypatch.setattr(rp, "find_custom_provider_identity",
+                        lambda url: "my-custom-provider" if url == custom_endpoint else None)
+
+    passed_config = {
+        "model": {"base_url": custom_endpoint},
+        "custom_providers": [
+            {
+                "name": "my-custom-provider",
+                "base_url": custom_endpoint,
+                "api_mode": "chat_completions",
+                "api_key": "custom-key",
+            }
+        ]
+    }
+
+    resolved = rpc._resolve_named_custom_runtime(
+        requested_provider="custom",
+        config=passed_config
+    )
+    assert resolved is not None
+    assert resolved["requested_provider"] == "my-custom-provider"
+    assert resolved["base_url"] == custom_endpoint

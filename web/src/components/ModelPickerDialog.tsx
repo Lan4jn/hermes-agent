@@ -12,6 +12,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import { cn, themedBody } from "@/lib/utils";
+import { useI18n } from "@/i18n";
+import { modelPickerEn } from "@/i18n/pagesEn";
 import { queryMatchesProviderOnly } from "@/lib/model-picker-filter";
 import { fuzzyRank, modelSearchText } from "@hermes/shared";
 import { errorMessage } from "@/lib/api-error";
@@ -97,10 +99,13 @@ export function ModelPickerDialog(props: Props) {
     loader,
     onApply,
     onClose,
-    title = "Switch Model",
+    title,
     alwaysGlobal = false,
     currentAssignment,
   } = props;
+  const { t } = useI18n();
+  const text = t.modelPicker ?? modelPickerEn;
+  const effectiveTitle = title ?? text.title;
   const standalone = !!loader && !!onApply;
 
   const [providers, setProviders] = useState<ModelOptionProvider[]>([]);
@@ -364,7 +369,7 @@ export function ModelPickerDialog(props: Props) {
           size="icon"
           onClick={onClose}
           className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-          aria-label="Close"
+          aria-label={t.common.close}
         >
           <X />
         </Button>
@@ -374,10 +379,10 @@ export function ModelPickerDialog(props: Props) {
             id="model-picker-title"
             className="font-mondwest text-display text-base tracking-wider"
           >
-            {title}
+            {effectiveTitle}
           </h2>
           <p className="text-xs text-muted-foreground mt-1 font-mono">
-            current:{" "}
+            {text.currentLabel || "current:"}{" "}
             {formatPickerCurrentLabel({
               model: currentModel,
               provider: currentProviderSlug,
@@ -390,7 +395,7 @@ export function ModelPickerDialog(props: Props) {
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               autoFocus
-              placeholder="Filter providers and models…"
+              placeholder={text.searchPlaceholder}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-7 h-8 text-sm"
@@ -437,7 +442,7 @@ export function ModelPickerDialog(props: Props) {
         <footer className="border-t border-border p-3 flex items-center justify-between gap-3 flex-wrap">
           {alwaysGlobal ? (
             <span className="text-xs text-muted-foreground">
-              Saves to config.yaml — applies to new sessions.
+              {text.savesToConfigYaml || "Saves to config.yaml — applies to new sessions."}
             </span>
           ) : (
             <div className="flex items-center gap-2">
@@ -453,7 +458,7 @@ export function ModelPickerDialog(props: Props) {
                 className="font-mondwest normal-case tracking-normal text-xs text-muted-foreground cursor-pointer"
                 htmlFor="model-picker-persist-global"
               >
-                Persist globally (otherwise this session only)
+                {text.persistGlobalCheckbox}
               </Label>
             </div>
           )}
@@ -465,24 +470,24 @@ export function ModelPickerDialog(props: Props) {
               disabled={applying || loading || refreshing}
             >
               {refreshing ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Refresh Models
+              {text.refreshModels}
             </Button>
             <Button outlined onClick={onClose} disabled={applying}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button onClick={confirm} disabled={!canConfirm}>
-              {applying ? <Spinner /> : "Switch"}
+              {applying ? <Spinner /> : t.common.confirm}
             </Button>
           </div>
         </footer>
       </div>
       <ConfirmDialog
         open={!!pendingConfirm}
-        title="Expensive Model Warning"
+        title={text.expensiveWarningTitle || "Expensive Model Warning"}
         description={pendingConfirm?.message}
         destructive
-        confirmLabel="Switch anyway"
-        cancelLabel="Cancel"
+        confirmLabel={text.switchAnyway || "Switch anyway"}
+        cancelLabel={t.common.cancel || "Cancel"}
         loading={applying}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {

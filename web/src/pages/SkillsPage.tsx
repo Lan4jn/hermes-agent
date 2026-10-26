@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
 import { en } from "@/i18n/en";
+import { skillsPageEn } from "@/i18n/pagesEn";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 import { errorMessage } from "@/lib/api-error";
@@ -146,6 +147,7 @@ export default function SkillsPage() {
   const [editorSkill, setEditorSkill] = useState<string | null>(null);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
+  const skillCopy = t.skillsPage ?? skillsPageEn;
   const { setAfterTitle, setEnd } = usePageHeader();
 
   // ── Profile scoping ──
@@ -434,7 +436,7 @@ export default function SkillsPage() {
                 />
                 <PanelItem
                   icon={Search}
-                  label="Browse hub"
+                  label={t.skills.browseHub ?? "Browse hub"}
                   active={view === "hub"}
                   onClick={() => {
                     setView("hub");
@@ -549,7 +551,7 @@ export default function SkillsPage() {
                       onClick={openLearn}
                       prefix={<Sparkles />}
                     >
-                      Learn a skill
+                      {skillCopy.learnFromSourcesTitle ?? "Learn a skill"}
                     </Button>
                     <Button
                       size="sm"
@@ -557,7 +559,7 @@ export default function SkillsPage() {
                       onClick={openCreateEditor}
                       prefix={<Plus />}
                     >
-                      New skill
+                      {t.skills.createSkill ?? "New skill"}
                     </Button>
                   </div>
                 </div>
@@ -704,27 +706,25 @@ export default function SkillsPage() {
       <Dialog open={learnOpen} onOpenChange={setLearnOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Learn a skill</DialogTitle>
+            <DialogTitle>{skillCopy.learnFromSourcesTitle}</DialogTitle>
             <DialogDescription>
-              Point Hermes at anything and it will distill a reusable skill —
-              following the house authoring standards. Fill in any combination
-              below; the agent gathers the sources and writes the skill in chat.
+              {skillCopy.learnFromSourcesDesc}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="grid gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                Local file or directory
+                {skillCopy.learnLocalLabel}
               </label>
               <Input
-                placeholder="~/projects/some-sdk  (read with read_file / search_files)"
+                placeholder={skillCopy.learnLocalPlaceholder}
                 value={learnDir}
                 onChange={(e) => setLearnDir(e.target.value)}
               />
             </div>
             <div className="grid gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                URL
+                {skillCopy.learnUrlLabel}
               </label>
               <Input
                 placeholder="https://docs.example.com/api  (fetched with web_extract)"
@@ -734,12 +734,11 @@ export default function SkillsPage() {
             </div>
             <div className="grid gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                Anything else — describe the workflow, paste notes, or say
-                "what we just did"
+                {skillCopy.learnNotesLabel}
               </label>
               <textarea
                 className="min-h-[90px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="e.g. how I file an expense report: open the portal, …"
+                placeholder={skillCopy.learnNotesPlaceholder}
                 value={learnText}
                 onChange={(e) => setLearnText(e.target.value)}
               />
@@ -747,14 +746,14 @@ export default function SkillsPage() {
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button ghost onClick={() => setLearnOpen(false)}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               onClick={submitLearn}
               prefix={<Sparkles />}
               disabled={!learnDir.trim() && !learnUrl.trim() && !learnText.trim()}
             >
-              Learn it
+              {skillCopy.learnSubmit}
             </Button>
           </div>
         </DialogContent>
@@ -771,6 +770,7 @@ function SkillRow({
   onEdit,
   noDescriptionLabel,
 }: SkillRowProps) {
+  const { t } = useI18n();
   return (
     <div className="group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
       <div className="pt-0.5 shrink-0">
@@ -799,7 +799,7 @@ function SkillRow({
         size="icon"
         className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
         title="Edit SKILL.md"
-        aria-label={`Edit ${skill.name}`}
+        aria-label={`${t.common.edit ?? "Edit"} ${skill.name}`}
         onClick={onEdit}
       >
         <Pencil />
@@ -894,6 +894,7 @@ function HubBrowser({
   /** Optional profile scoping installs + installed-state badges. */
   profile?: string;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillHubResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1089,7 +1090,7 @@ function HubBrowser({
                   size="xs"
                   className="ml-auto text-muted-foreground"
                   onClick={() => setAction(null)}
-                  aria-label="Dismiss"
+                  aria-label={t.common.dismiss ?? "Dismiss"}
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -1294,6 +1295,7 @@ function HubResultCard({
   onOpen: () => void;
   onInstall: () => void;
 }) {
+  const { t } = useI18n();
   const trust = trustVisual(result.trust_level);
   return (
     <Card className="rounded-none transition-colors hover:bg-muted/30">
@@ -1302,7 +1304,7 @@ function HubResultCard({
           type="button"
           className="flex-1 min-w-0 text-left"
           onClick={onOpen}
-          aria-label={`Open ${result.name}`}
+          aria-label={`${t.common.open ?? "Open"} ${result.name}`}
         >
           <div className="flex flex-wrap items-center gap-2 mb-0.5">
             <span className="font-mono-ui text-sm hover:underline">
@@ -1316,7 +1318,7 @@ function HubResultCard({
             </Badge>
             {installed && (
               <Badge tone="success" className="text-xs">
-                installed
+                {t.common.installed ?? "installed"}
               </Badge>
             )}
           </div>

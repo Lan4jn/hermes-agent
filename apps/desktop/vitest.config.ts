@@ -1,8 +1,20 @@
+import path from 'path'
+import { fileURLToPath } from 'url'
 import type { TestProjectConfiguration } from 'vitest/config'
 import { defineConfig } from 'vitest/config'
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
 const reactUi: TestProjectConfiguration = {
-  extends: './vite.config.ts',
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+      '@hermes/plugin-sdk': path.resolve(__dirname, 'src/sdk/index.ts'),
+      '@hermes/shared/billing': path.resolve(__dirname, '../shared/src/billing-types.ts'),
+      '@hermes/shared/color': path.resolve(__dirname, '../shared/src/color.ts'),
+      '@hermes/shared': path.resolve(__dirname, '../shared/src')
+    }
+  },
   test: {
     name: 'ui',
     environment: 'jsdom',

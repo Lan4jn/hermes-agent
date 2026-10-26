@@ -96,11 +96,12 @@ function setupResultClass(status: string) {
 }
 
 function MemoryProviderSetupResults({ results }: { results: MemoryProviderSetupResult[] }) {
+  const { t } = useI18n();
   if (!results.length) return null;
 
   return (
     <div className="grid gap-2 border border-border bg-background/20 p-3">
-      <p className="text-muted-foreground">Setup results</p>
+      <p className="text-muted-foreground">{t.pluginsPage.setupResults || "Setup results"}</p>
       {results.map((result, index) => {
         const detail = result.stderr || result.stdout;
         return (
@@ -147,6 +148,7 @@ function MemoryProviderSetupHint({
   provider: MemoryProviderInfo;
   results: MemoryProviderSetupResult[] | null;
 }) {
+  const { t } = useI18n();
   const setup = provider.setup;
   const hasDetails = setupHasDetails(setup);
   const hasInstallableSteps = setupHasInstallableSteps(setup);
@@ -228,7 +230,7 @@ function MemoryProviderSetupHint({
 
           {setup.pip_dependencies.length ? (
             <div className="grid gap-2">
-              <p className="text-muted-foreground">Python dependencies</p>
+              <p className="text-muted-foreground">{t.pluginsPage.pythonDependencies || "Python dependencies"}</p>
               <div className="flex flex-wrap gap-2">
                 {setup.pip_dependencies.map((dep) => (
                   <code
@@ -581,14 +583,15 @@ export default function PluginsPage() {
                       <Label htmlFor="mem-provider">{t.pluginsPage.memoryProviderLabel}</Label>
                       {selectedMemoryName && selectedMemoryInfo && (
                         <Badge tone={MEMORY_STATUS_TONE[selectedMemoryInfo.status]}>
-                          {MEMORY_STATUS_LABEL[selectedMemoryInfo.status]}
+                          {t.pluginsPage.statusLabels?.[selectedMemoryInfo.status] ??
+                            MEMORY_STATUS_LABEL[selectedMemoryInfo.status]}
                         </Badge>
                       )}
                       {selectedMemoryName && selectedMemoryName === providers.memory_provider && (
-                        <Badge tone="outline">active</Badge>
+                        <Badge tone="outline">{t.common.active || "active"}</Badge>
                       )}
                       {!selectedMemoryName && !providers.memory_provider && (
-                        <Badge tone="success">active</Badge>
+                        <Badge tone="success">{t.common.active || "active"}</Badge>
                       )}
                     </div>
 
@@ -664,9 +667,9 @@ export default function PluginsPage() {
                           <div key={field.key} className="grid gap-2 min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <Label htmlFor={`memory-${field.key}`}>{field.label}</Label>
-                              {field.required && <Badge tone="outline">required</Badge>}
+                              {field.required && <Badge tone="outline">{t.common.required || "required"}</Badge>}
                               {field.kind === "secret" && field.is_set && !value && (
-                                <Badge tone="success">set</Badge>
+                                <Badge tone="success">{t.common.set}</Badge>
                               )}
                               {field.url && (
                                 <a

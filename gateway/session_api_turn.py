@@ -21,7 +21,7 @@ _OBSERVER_KEYS = ('stream_delta_callback', 'tool_start_callback', 'tool_complete
 _SETTING_KEYS = ('ephemeral_system_prompt', 'requested_model', 'requested_provider',
                  'model_options', 'route', 'session_model', 'confirmed_runtime_lock',
                  'requested_runtime', 'route_source', 'room_dispatch', 'room_execution_policy',
-                 'session_history_delivery')
+                 'session_history_delivery', 'agent_mode')
 _OWNER_SCOPE_RE = re.compile(r'[0-9a-f]{64}')
 
 

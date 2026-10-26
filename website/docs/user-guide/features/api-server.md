@@ -541,6 +541,20 @@ The public `/health` route remains a cheap liveness probe and does not run
 readiness checks. A degraded readiness result still uses HTTP 200; inspect the
 top-level `status` and `readiness.checks` fields.
 
+## Messaging API (`POST /message`)
+
+The gateway's `/message` endpoint accepts a `message` string and optional
+`session_id`, `sender_id`, and `agent_mode`. By default, `agent_mode` is
+`"default"` and runs a normal agent turn. Set it to `"direct"` for a single
+iteration without agent tools, context files, memory, or background review.
+Direct mode does not record shared message notes. Unknown modes return HTTP 400.
+
+Chat authentication is controlled separately by the profile's
+`require_chat_key` policy, which is off by default. A message key authorizes
+chat only: it never authorizes the `command` field or issues an execution
+token. Command execution requires its own configuration and authorization,
+regardless of `agent_mode`. Protect any network-exposed listener accordingly.
+
 ## Runs API (streaming-friendly alternative)
 
 In addition to `/v1/chat/completions` and `/v1/responses`, the server exposes a **runs** API for long-form sessions where the client wants to subscribe to progress events instead of managing streaming themselves.
@@ -901,7 +915,7 @@ The API server gives full access to hermes-agent's toolset, **including terminal
 |----------|---------|-------------|
 | `API_SERVER_ENABLED` | `false` | Enable the API server |
 | `API_SERVER_PORT` | `8642` | HTTP server port |
-| `API_SERVER_HOST` | `127.0.0.1` | Bind address (localhost only by default) |
+| `API_SERVER_HOST` | `127.0.0.1` | Bind address; `dual` binds IPv4 and IPv6 |
 | `API_SERVER_KEY` | _(required)_ | Bearer token for auth |
 | `API_SERVER_CORS_ORIGINS` | _(none)_ | Comma-separated allowed browser origins |
 | `API_SERVER_MODEL_NAME` | _(profile name)_ | Model name on `/v1/models`. Defaults to profile name, or `hermes-agent` for default profile. |
@@ -916,12 +930,18 @@ gateway:
     enabled: true
     port: 8642
     host: 127.0.0.1
+    allow_remote: false  # set true to bind a network-accessible address
     key: your-secret-key
     cors_origins: http://localhost:3000
     model_name: my-hermes
     max_concurrent_runs: 10   # concurrent-run cap; 0 disables the limit
     history_tool_output_max_chars: 0   # cap tool outputs in stored /v1/responses history; 0 = verbatim
 ```
+
+For LAN access on both address families, set `host: dual` and `allow_remote: true`.
+An explicit wildcard such as `0.0.0.0` or `::` also requires `allow_remote: true`.
+Keep `API_SERVER_KEY` strong and restrict the port to trusted clients with a firewall;
+the API can run terminal-capable agent tasks.
 
 `port`, `key`, `host`, `cors_origins`, and `model_name` are automatically bridged into the platform's `extra` settings, so they behave exactly like their `API_SERVER_*` environment-variable counterparts. Environment variables take precedence over `config.yaml` values. The block is also accepted under `gateway.platforms.api_server:` or a top-level `platforms.api_server:` section.
 

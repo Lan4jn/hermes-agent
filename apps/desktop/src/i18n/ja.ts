@@ -345,6 +345,7 @@ export const jaOverrides = {
       keybinds: 'キーボードショートカット',
       keysTools: 'ツール',
       keysSettings: '設定',
+      keysMessage: 'メッセージキー',
       mcp: 'MCP',
       archivedChats: 'アーカイブ済みチャット',
       sessions: 'セッション',

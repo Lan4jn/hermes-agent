@@ -530,6 +530,24 @@ class TestRestartWaitsForApiServerPort:
 
         assert gateway._wait_for_tcp_port_free("127.0.0.1", port, timeout=5.0) is True
 
+    def test_dual_stack_wait_checks_both_address_families(self, monkeypatch):
+        from contextlib import nullcontext
+
+        attempted = []
+        busy = {"::1"}
+
+        def probe(address, *, timeout):
+            attempted.append(address[0])
+            if address[0] in busy:
+                return nullcontext()
+            raise ConnectionRefusedError
+
+        monkeypatch.setattr(gateway.socket, "create_connection", probe)
+        assert gateway._wait_for_tcp_port_free(None, 8642, timeout=0.2) is False
+        assert {"127.0.0.1", "::1"} <= set(attempted)
+        busy.clear()
+        assert gateway._wait_for_tcp_port_free(None, 8642, timeout=0.2) is True
+
     def test_wait_targets_the_configured_api_server_port_only_when_enabled(self, monkeypatch):
         import socket
 

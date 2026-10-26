@@ -1,0 +1,483 @@
+from __future__ import annotations
+
+import json
+import traceback
+from dataclasses import FrozenInstanceError
+from urllib.parse import quote
+
+import pytest
+
+from agent.gemini_endpoints import (
+    code_assist_sensitive_values,
+    GeminiEndpointConfigError,
+    GeminiOAuthEndpoints,
+    OFFICIAL_CODE_ASSIST_BASE_URL,
+    normalize_code_assist_base_url,
+    resolve_gemini_oauth_endpoints,
+)
+
+
+DEFAULTS = GeminiOAuthEndpoints(
+    oauth_authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+    oauth_token_url="https://oauth2.googleapis.com/token",
+    oauth_userinfo_url="https://www.googleapis.com/oauth2/v1/userinfo",
+    code_assist_base_url="https://cloudcode-pa.googleapis.com",
+    custom_code_assist=False,
+)
+
+
+def _config(**overrides: object) -> dict[str, object]:
+    return {"providers": {"google-gemini-cli": overrides}}
+
+
+def test_official_defaults_are_frozen() -> None:
+    endpoints = resolve_gemini_oauth_endpoints({})
+
+    assert endpoints == DEFAULTS
+    with pytest.raises(FrozenInstanceError):
+        endpoints.oauth_token_url = "https://example.test/token"  # type: ignore[misc]
+
+
+def test_official_code_assist_base_url_is_public() -> None:
+    assert OFFICIAL_CODE_ASSIST_BASE_URL == DEFAULTS.code_assist_base_url
+
+
+def test_public_code_assist_normalizer_reuses_endpoint_rules() -> None:
+    assert normalize_code_assist_base_url(
+        "https://proxy.example.test/private/code///"
+    ) == "https://proxy.example.test/private/code"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "ftp://proxy.example.test/private/code",
+        "https://user:secret@proxy.example.test/private/code",
+        "https://proxy.example.test/private/code?token=secret",
+        "https://proxy.example.test/private/code#secret",
+        "http://proxy.example.test/private/code",
+        "https://proxy.example.test/private/\x00code",
+    ],
+)
+def test_public_code_assist_normalizer_rejects_unsafe_values(value: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError, match="code_assist_base_url"):
+        normalize_code_assist_base_url(value)
+
+
+def test_code_assist_sensitive_values_include_fullbase_and_nonroot_path() -> None:
+    assert code_assist_sensitive_values(
+        "https://proxy.example.test/private/customer-path"
+    ) == (
+        "https://proxy.example.test/private/customer-path",
+        "/private/customer-path",
+        "private/customer-path",
+    )
+    assert code_assist_sensitive_values("https://proxy.example.test/") == (
+        "https://proxy.example.test",
+    )
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        (
+            "https://proxy.example.test/private/%22customer",
+            {
+                "https://proxy.example.test/private/%22customer",
+                "https://proxy.example.test/private/\"customer",
+                "/private/%22customer",
+                "private/%22customer",
+                "/private/\"customer",
+                "private/\"customer",
+            },
+        ),
+        (
+            "https://proxy.example.test/private/%2522customer",
+            {
+                "https://proxy.example.test/private/%2522customer",
+                "https://proxy.example.test/private/%22customer",
+                "https://proxy.example.test/private/\"customer",
+                "/private/%2522customer",
+                "private/%2522customer",
+                "/private/%22customer",
+                "private/%22customer",
+                "/private/\"customer",
+                "private/\"customer",
+            },
+        ),
+        (
+            "https://proxy.example.test/private/%5csecret",
+            {
+                "https://proxy.example.test/private/%5csecret",
+                "https://proxy.example.test/private/%5Csecret",
+                "https://proxy.example.test/private/\\secret",
+                "/private/%5csecret",
+                "private/%5csecret",
+                "/private/%5Csecret",
+                "private/%5Csecret",
+                "/private/\\secret",
+                "private/\\secret",
+            },
+        ),
+    ],
+)
+def test_code_assist_sensitive_values_canonicalize_encoded_paths(
+    base_url: str, expected: set[str],
+) -> None:
+    values = code_assist_sensitive_values(base_url)
+
+    assert expected.issubset(values)
+    assert [len(value) for value in values] == sorted(
+        (len(value) for value in values), reverse=True,
+    )
+    assert "/" not in values
+    assert "proxy" not in values
+    assert "example" not in values
+
+
+def test_code_assist_base_rejects_raw_backslash_but_accepts_encoded() -> None:
+    with pytest.raises(GeminiEndpointConfigError):
+        normalize_code_assist_base_url(
+            "https://proxy.example.test/private/\\secret"
+        )
+
+    assert normalize_code_assist_base_url(
+        "https://proxy.example.test/private/%5Csecret"
+    ) == "https://proxy.example.test/private/%5Csecret"
+
+
+@pytest.mark.parametrize("depth", [1, 3, 8, 32])
+def test_code_assist_sensitive_decoding_reaches_stable_layer(depth: int) -> None:
+    origin = "https://proxy.example.test"
+    path_layers = ['/private/"customer']
+    for _ in range(depth):
+        path_layers.append(quote(path_layers[-1], safe="/"))
+
+    values = code_assist_sensitive_values(f"{origin}{path_layers[-1]}")
+
+    for path in path_layers:
+        assert path in values
+        assert path.lstrip("/") in values
+        assert f"{origin}{path}" in values
+    assert [len(value) for value in values] == sorted(
+        (len(value) for value in values), reverse=True,
+    )
+    assert len(values) <= 3 * len(f"{origin}{path_layers[-1]}")
+
+
+def test_endpoint_url_length_limit_rejects_without_echoing_url() -> None:
+    from agent import gemini_endpoints
+
+    prefix = "https://proxy.example.test/"
+    limit = gemini_endpoints.MAX_ENDPOINT_URL_CHARS
+    allowed = prefix + "a" * (limit - len(prefix))
+    rejected = allowed + "secret-tail"
+
+    assert normalize_code_assist_base_url(allowed) == allowed
+    with pytest.raises(GeminiEndpointConfigError) as exc_info:
+        normalize_code_assist_base_url(rejected)
+    assert rejected not in str(exc_info.value)
+
+
+def test_single_segment_sensitive_paths_include_slashless_canonical_forms() -> None:
+    values = code_assist_sensitive_values("https://proxy.example.test/error")
+    encoded_values = code_assist_sensitive_values(
+        "https://proxy.example.test/%65rror"
+    )
+
+    assert "/error" in values
+    assert "https://proxy.example.test/error" in values
+    assert "error" in values
+    assert "/error" in encoded_values
+    assert "https://proxy.example.test/error" in encoded_values
+    assert "error" in encoded_values
+
+
+def test_multi_segment_sensitive_paths_keep_slashless_form() -> None:
+    values = code_assist_sensitive_values(
+        "https://proxy.example.test/private/customer"
+    )
+
+    assert "/private/customer" in values
+    assert "private/customer" in values
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("oauth_authorize_url", "https://auth.example.test/authorize"),
+        ("oauth_token_url", "https://auth.example.test/token"),
+        ("oauth_userinfo_url", "https://api.example.test/me"),
+        ("code_assist_base_url", "https://code.example.test/api"),
+    ],
+)
+def test_each_endpoint_can_be_configured_independently(
+    field: str, value: str
+) -> None:
+    endpoints = resolve_gemini_oauth_endpoints(_config(**{field: value}))
+
+    for endpoint_field in (
+        "oauth_authorize_url",
+        "oauth_token_url",
+        "oauth_userinfo_url",
+        "code_assist_base_url",
+    ):
+        expected = value if endpoint_field == field else getattr(DEFAULTS, endpoint_field)
+        assert getattr(endpoints, endpoint_field) == expected
+    assert endpoints.custom_code_assist is (field == "code_assist_base_url")
+
+
+def test_trailing_slashes_are_removed_without_corrupting_root_urls() -> None:
+    endpoints = resolve_gemini_oauth_endpoints(
+        _config(
+            oauth_authorize_url="https://auth.example.test///",
+            oauth_token_url="https://token.example.test/",
+            oauth_userinfo_url="https://userinfo.example.test/path///",
+            code_assist_base_url="https://cloudcode-pa.googleapis.com/",
+        )
+    )
+
+    assert endpoints.oauth_authorize_url == "https://auth.example.test"
+    assert endpoints.oauth_token_url == "https://token.example.test"
+    assert endpoints.oauth_userinfo_url == "https://userinfo.example.test/path"
+    assert endpoints.code_assist_base_url == DEFAULTS.code_assist_base_url
+    assert endpoints.custom_code_assist is False
+
+
+@pytest.mark.parametrize("provider_config", [None, [], "invalid"])
+def test_non_mapping_google_gemini_cli_config_uses_defaults(
+    provider_config: object,
+) -> None:
+    config = {"providers": {"google-gemini-cli": provider_config}}
+
+    assert resolve_gemini_oauth_endpoints(config) == DEFAULTS
+
+
+@pytest.mark.parametrize("providers", [None, [], "invalid"])
+def test_non_mapping_providers_block_uses_defaults(providers: object) -> None:
+    assert resolve_gemini_oauth_endpoints({"providers": providers}) == DEFAULTS
+
+
+def test_empty_endpoint_values_use_independent_defaults() -> None:
+    endpoints = resolve_gemini_oauth_endpoints(
+        _config(
+            oauth_authorize_url="",
+            oauth_token_url="",
+            oauth_userinfo_url=None,
+            code_assist_base_url="",
+        )
+    )
+
+    assert endpoints == DEFAULTS
+
+
+@pytest.mark.parametrize(
+    ("field", "url"),
+    [
+        ("oauth_authorize_url", "http://example.test/authorize"),
+        ("oauth_token_url", "ftp://example.test/token"),
+        ("oauth_userinfo_url", "/oauth2/userinfo"),
+        ("code_assist_base_url", "https:///api"),
+        ("oauth_token_url", "https://user:password@example.test/token"),
+        ("oauth_token_url", "https://example.test/token?client_secret=hunter2"),
+        ("oauth_authorize_url", "https://example.test/auth#access-token"),
+    ],
+)
+def test_invalid_endpoint_matrix_is_rejected(field: str, url: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError, match=field):
+        resolve_gemini_oauth_endpoints(_config(**{field: url}))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.test/token?",
+        "https://example.test/token#",
+    ],
+)
+def test_empty_query_or_fragment_delimiters_are_rejected(url: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    assert url not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        " https://example.test/token",
+        "https://example.test/token ",
+        "ht\ntps://example.test/token",
+        "https://exam\tple.test/token",
+        "https://example.test/to\rken",
+        "https://exam\x00ple.test/token",
+        "https://example.test/to\x00ken",
+        "https://exam\u0080ple.test/token",
+        "https://example.test/to\u009fken",
+    ],
+    ids=[
+        "leading-whitespace",
+        "trailing-whitespace",
+        "newline-in-scheme",
+        "tab-in-host",
+        "carriage-return-in-path",
+        "nul-in-host",
+        "nul-in-path",
+        "unicode-control-in-host",
+        "unicode-control-in-path",
+    ],
+)
+def test_endpoint_rejects_raw_whitespace_and_control_characters(url: str) -> None:
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    message = str(caught.value)
+    assert "oauth_token_url" in message
+    assert url not in message
+
+
+@pytest.mark.parametrize(
+    "character",
+    [
+        *(chr(code) for code in range(0x20) if code not in {0, 9, 10, 13}),
+        "\x7f",
+        "\u00a0",
+    ],
+)
+def test_endpoint_rejects_other_c0_del_and_unicode_whitespace(
+    character: str,
+) -> None:
+    url = f"https://example.test/to{character}ken"
+
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    message = str(caught.value)
+    assert "oauth_token_url" in message
+    assert url not in message
+
+
+@pytest.mark.parametrize(
+    ("url", "normalized"),
+    [
+        ("http://localhost:8080/token/", "http://localhost:8080/token"),
+        ("http://127.0.0.1/oauth/", "http://127.0.0.1/oauth"),
+        ("http://[::1]:9000/token/", "http://[::1]:9000/token"),
+    ],
+)
+def test_http_is_allowed_only_for_loopback_hosts(url: str, normalized: str) -> None:
+    endpoints = resolve_gemini_oauth_endpoints(_config(oauth_token_url=url))
+
+    assert endpoints.oauth_token_url == normalized
+
+
+def test_errors_do_not_leak_credentials_or_query_values() -> None:
+    secret_url = (
+        "https://alice:correct-horse@example.test/token"
+        "?client_secret=battery-staple"
+    )
+
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(_config(oauth_token_url=secret_url))
+
+    message = str(caught.value)
+    assert "oauth_token_url" in message
+    for secret in (secret_url, "alice", "correct-horse", "battery-staple"):
+        assert secret not in message
+
+
+def test_malformed_url_cause_does_not_leak_sensitive_values() -> None:
+    secret = "super" + "-secret"
+    with pytest.raises(GeminiEndpointConfigError) as caught:
+        resolve_gemini_oauth_endpoints(
+            _config(oauth_token_url=f"https://example.test:{secret}/token")
+        )
+
+    rendered_error = "".join(traceback.format_exception(caught.value))
+    assert secret not in rendered_error
+
+
+def test_explicit_configs_are_resolved_without_shared_state() -> None:
+    first = resolve_gemini_oauth_endpoints(
+        _config(code_assist_base_url="https://first.example.test")
+    )
+    second = resolve_gemini_oauth_endpoints(
+        _config(code_assist_base_url="https://second.example.test")
+    )
+
+    assert first.code_assist_base_url == "https://first.example.test"
+    assert second.code_assist_base_url == "https://second.example.test"
+
+
+def test_none_config_loads_each_active_profile(monkeypatch, tmp_path) -> None:
+    first_home = tmp_path / "first"
+    second_home = tmp_path / "second"
+    first_home.mkdir()
+    second_home.mkdir()
+    (first_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://first.example.test/token")),
+        encoding="utf-8",
+    )
+    (second_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://second.example.test/token")),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(first_home))
+    first = resolve_gemini_oauth_endpoints()
+    monkeypatch.setenv("HERMES_HOME", str(second_home))
+    second = resolve_gemini_oauth_endpoints()
+
+    assert first.oauth_token_url == "https://first.example.test/token"
+    assert second.oauth_token_url == "https://second.example.test/token"
+
+
+def test_context_local_home_overrides_resolve_independent_profiles(tmp_path) -> None:
+    from hermes_constants import (
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+
+    first_home = tmp_path / "first-override"
+    second_home = tmp_path / "second-override"
+    first_home.mkdir()
+    second_home.mkdir()
+    (first_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://first.example.test/token")),
+        encoding="utf-8",
+    )
+    (second_home / "config.yaml").write_text(
+        json.dumps(_config(oauth_token_url="https://second.example.test/token")),
+        encoding="utf-8",
+    )
+
+    first_token = set_hermes_home_override(first_home)
+    try:
+        first = resolve_gemini_oauth_endpoints()
+    finally:
+        reset_hermes_home_override(first_token)
+
+    second_token = set_hermes_home_override(second_home)
+    try:
+        second = resolve_gemini_oauth_endpoints()
+    finally:
+        reset_hermes_home_override(second_token)
+
+    assert first.oauth_token_url == "https://first.example.test/token"
+    assert second.oauth_token_url == "https://second.example.test/token"
+
+
+def test_public_exports_are_explicit() -> None:
+    from agent import gemini_endpoints
+
+    required_exports = {
+        "code_assist_sensitive_values",
+        "GeminiEndpointConfigError",
+        "GeminiOAuthEndpoints",
+        "MAX_ENDPOINT_URL_CHARS",
+        "OFFICIAL_CODE_ASSIST_BASE_URL",
+        "normalize_code_assist_base_url",
+        "resolve_gemini_oauth_endpoints",
+    }
+
+    assert required_exports.issubset(gemini_endpoints.__all__)

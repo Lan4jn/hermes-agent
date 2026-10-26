@@ -2755,6 +2755,30 @@ OPTIONAL_ENV_VARS = {
     "GEMINI_API_KEY": _prov("Google AI Studio API key (alias for GOOGLE_API_KEY)", "Gemini API key",
         "https://aistudio.google.com/app/apikey"),
     "GEMINI_BASE_URL": _base_url("Google AI Studio", "Gemini"),
+    "HERMES_GEMINI_CLIENT_ID": _env(
+        "Google OAuth client ID for google-gemini-cli (optional; defaults to Google's public gemini-cli client)",
+        "Google OAuth client ID (optional — leave empty to use the public default)",
+        url="https://console.cloud.google.com/apis/credentials",
+        password=False,
+        category="provider",
+        advanced=True,
+    ),
+    "HERMES_GEMINI_CLIENT_SECRET": _env(
+        "Google OAuth client secret for google-gemini-cli (optional)",
+        "Google OAuth client secret (optional)",
+        url="https://console.cloud.google.com/apis/credentials",
+        password=True,
+        category="provider",
+        advanced=True,
+    ),
+    "HERMES_GEMINI_PROJECT_ID": _env(
+        "GCP project ID for paid Gemini tiers (free tier auto-provisions)",
+        "GCP project ID for Gemini OAuth (leave empty for free tier)",
+        url=None,
+        password=False,
+        category="provider",
+        advanced=True,
+    ),
     "VERTEX_CREDENTIALS_PATH": _prov(
         "Path to a Google Cloud service account JSON for Vertex AI (Gemini). Vertex uses "
         "OAuth2, not a static API key — this points at the credentials Hermes mints short-lived "

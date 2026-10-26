@@ -113,8 +113,8 @@ export function readPackagingInputs(manifest, source, target = `${process.platfo
     }
     const required = [result.electron, result.toolsets.sevenZip, result.toolsets.icons, ...Object.values(result.toolsets)]
     if (target.startsWith('win32-')) {
-      if (!result.windows || !result.toolsets.winCodeSign || !result.windows.dotnetRoot) throw preparationRequired('Missing Windows tool selection')
-      required.push(result.windows.dotnetRoot)
+      if (!result.windows || !result.toolsets.winCodeSign || (result.formats.includes('msix') && !result.windows.dotnetRoot)) throw preparationRequired('Missing Windows tool selection')
+      if (result.windows.dotnetRoot) required.push(result.windows.dotnetRoot)
     }
     if (result.formats.includes('dmg')) {
       if (!result.dmgbuild) throw preparationRequired('Missing prepared dmgbuild')

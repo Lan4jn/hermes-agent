@@ -1249,12 +1249,21 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             tier = _request_service_tier(api['settings'].get('model_options'))
             if tier is not _REQUEST_OPTION_MISSING:
                 runner._service_tier = tier
+            if api['settings'].get('agent_mode') == 'direct':
+                max_iterations = 1
+                ctx.enabled_toolsets = []
         runner._reasoning_config = reasoning_config
         stream_consumer, stream_delta_cb, interim_cb, want_interim = self._setup_stream_consumer(platform_key)
         turn_route = runner._resolve_turn_agent_config(ctx.message, model, runtime_kwargs)
         agent, reused_cached_agent = self._resolve_turn_agent(
             turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr,
         )
+        if api is not None and api['settings'].get('agent_mode') == 'direct':
+            agent.max_iterations = 1
+            agent.enabled_toolsets = []
+            agent.skip_context_files = True
+            agent.skip_memory = True
+            agent.skip_background_review = True
         if pending_fallback_notice:
             # Reuse the in-agent one-shot notice so the pre-agent provider switch is user-visible too.
             agent._pending_fallback_notice = pending_fallback_notice

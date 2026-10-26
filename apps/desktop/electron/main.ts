@@ -402,6 +402,8 @@ import { runNativeLogin } from './native-oauth-login'
 import { loadNativeTokenSet, type NativeTokenStoreIo, persistNativeTokenSet } from './native-token-store'
 import { execGit, killTimedGitChildren, setNoConsoleGitRoots } from './no-console-git'
 import { registerNativeNotifications } from './notification-ipc'
+import { createOauthLoginCompletion } from './oauth-login-completion'
+import { clearRemoteOauthSession } from './oauth-logout'
 import { isExpectedOauthNavigationAbort } from './oauth-navigation'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import { LEGACY_OAUTH_PARTITION, resolveOauthPartition } from './oauth-partition'
@@ -7380,15 +7382,13 @@ function openOauthLoginWindow(
       }
     }
 
-    const checkCookie = async () => {
-      if (settled) {
-        return
-      }
-
-      if (await hasOauthSessionCookie(baseUrl, { connectionId, pendingAuthMode, pendingKind })) {
-        finish(null)
-      }
-    }
+    const checkCookie = createOauthLoginCompletion({
+      hasSession: async () =>
+        !settled && (await hasOauthSessionCookie(baseUrl, { connectionId, pendingAuthMode, pendingKind })),
+      flushCookies: () => sess.cookies.flushStore(),
+      onSuccess: () => finish(null),
+      onFailure: error => finish(error)
+    })
 
     try {
       win = new BrowserWindow({
@@ -7648,7 +7648,7 @@ function _nativeTokenStoreIo(): NativeTokenStoreIo {
     readStoreText: () => fs.readFileSync(_nativeTokenStorePath(), 'utf8'),
     writeStoreText: (text: string) => {
       fs.mkdirSync(path.dirname(_nativeTokenStorePath()), { recursive: true })
-      fs.writeFileSync(_nativeTokenStorePath(), text, { mode: 0o600 })
+      writeSecretFileAtomic(_nativeTokenStorePath(), text, { encoding: 'utf8' })
     },
     rememberLog
   }
@@ -7681,8 +7681,8 @@ function _storeNativeTokens(baseUrl: string, tokens: NativeTokenSet) {
 }
 
 function _clearNativeTokens(baseUrl: string) {
-  _nativeTokens.delete(baseUrl)
   _persistNativeTokens(baseUrl, null)
+  _nativeTokens.delete(baseUrl)
 }
 
 // True when we hold native bearer tokens for this gateway (the native-flow
@@ -15771,8 +15771,10 @@ ipcMain.handle('hermes:connection-config:oauth-logout', async (_event, rawUrl) =
   // logout clears BOTH auth shapes.
   // Clear before awaiting cookie I/O: a pending login/refresh cannot restore
   // logout, and a later login must not be erased when cookie clearing settles.
-  nativeAccessTokenCoordinator.clearTokens(baseUrl)
-  await clearOauthSession(baseUrl)
+  await clearRemoteOauthSession({
+    clearNativeTokens: () => nativeAccessTokenCoordinator.clearTokens(baseUrl),
+    clearCookies: () => clearOauthSession(baseUrl)
+  })
 
   // Report against the SAME liveness notion the Settings indicator uses
   // (AT-or-RT cookie, or a native token) so a logout that left any session

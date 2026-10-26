@@ -442,6 +442,71 @@ def _model_flow_qwen_oauth(_config, current_model=""):
     _activate_provider_model(selected, "qwen-oauth", DEFAULT_QWEN_BASE_URL, f"Default model set to: {selected} (via Qwen OAuth)")
 
 
+def _model_flow_google_gemini_cli(_config, current_model=""):
+    """Google Gemini OAuth (PKCE) via Cloud Code Assist — supports free AND paid tiers."""
+    from hermes_cli.auth import (
+        get_gemini_oauth_auth_status,
+        resolve_gemini_oauth_runtime_credentials,
+        _prompt_model_selection,
+    )
+    from agent.gemini_endpoints import resolve_gemini_oauth_endpoints
+    from hermes_cli.models import _PROVIDER_MODELS
+
+    status = get_gemini_oauth_auth_status()
+    if not status.get("logged_in"):
+        try:
+            from agent.google_oauth import resolve_project_id_from_env, start_oauth_flow
+
+            env_project = resolve_project_id_from_env()
+            creds = start_oauth_flow(
+                project_id=env_project,
+                force_relogin=True,
+            )
+            from hermes_cli.auth import _mark_google_gemini_cli_active
+            _mark_google_gemini_cli_active({
+                "email": creds.email,
+                "project_id": creds.project_id,
+            })
+        except Exception as exc:
+            print(f"OAuth login failed: {exc}")
+            return
+
+    # Verify creds resolve + trigger project discovery
+    try:
+        creds = resolve_gemini_oauth_runtime_credentials(force_refresh=False)
+        project_id = creds.get("project_id", "")
+        if project_id:
+            print(f"  Using GCP project: {project_id}")
+        else:
+            print(
+                "  No GCP project configured — free tier will be auto-provisioned on first request."
+            )
+    except Exception as exc:
+        print(f"Failed to resolve Gemini credentials: {exc}")
+        return
+
+    models = list(_PROVIDER_MODELS.get("google-gemini-cli") or [])
+    code_assist_base_url = resolve_gemini_oauth_endpoints(
+        _config
+    ).code_assist_base_url
+    default = current_model or (models[0] if models else "gemini-3-flash-preview")
+    selected = _prompt_model_selection(
+        models,
+        current_model=default,
+        confirm_provider="google-gemini-cli",
+        confirm_base_url=code_assist_base_url,
+    )
+    if selected:
+        _activate_provider_model(
+            selected,
+            "google-gemini-cli",
+            code_assist_base_url,
+            f"Default model set to: {selected} (via Google Gemini OAuth / Code Assist)",
+        )
+    else:
+        print("No change.")
+
+
 def _model_flow_minimax_oauth(config, current_model="", args=None):
     """MiniMax OAuth provider: ensure logged in, then pick model."""
     from hermes_cli.auth import (

@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { atom } from 'nanostores'
 import { MemoryRouter, useNavigate } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,16 +8,66 @@ import { stubResizeObserver } from '@/test/jsdom'
 import { envVar } from './test-utils'
 
 const getEnvVars = vi.fn()
+const testConnectionId = atom<null | string>('test-conn')
 
 stubResizeObserver()
 
 vi.mock('@/hermes', () => ({
   deleteEnvVar: vi.fn(),
   getEnvVars: (profile?: null | string) => getEnvVars(profile),
+  getProfiles: vi.fn().mockResolvedValue({ profiles: [] }),
   revealEnvVar: vi.fn(),
   setApiRequestProfile: () => undefined,
   setEnvVar: vi.fn()
 }))
+
+vi.mock('@/store/connections', async importOriginal => {
+  const actual = await importOriginal<any>()
+
+  return {
+    ...actual,
+    $activeConnectionId: testConnectionId
+  }
+})
+
+vi.mock('@/store/session', async importOriginal => {
+  const actual = await importOriginal<any>()
+
+  return {
+    ...actual,
+    $gatewayState: {
+      get: () => 'open',
+      listen: () => () => {},
+      subscribe: (fn: any) => {
+        fn('open')
+
+        return () => {}
+      },
+      value: 'open'
+    }
+  }
+})
+
+const mockGatewayRpc = vi.fn()
+
+vi.mock('@/store/gateway', async importOriginal => {
+  const actual = await importOriginal<any>()
+
+  return {
+    ...actual,
+    requestGatewayForAgent: (conn: any, prof: any, method: string, params: any) => {
+      if (mockGatewayRpc.getMockImplementation()) {
+        return mockGatewayRpc(conn, prof, method, params)
+      }
+
+      if (method === 'message_keys.list') {return Promise.resolve({ items: [] })}
+
+      if (method === 'message_keys.get_policy') {return Promise.resolve({ require_chat_key: false })}
+
+      return Promise.resolve({})
+    }
+  }
+})
 
 // Load once at module scope so no test's 15s budget pays the heavy transform
 // + import (the first-test timeout flake under CI load).
@@ -24,6 +75,8 @@ const { KeysSettings } = await import('./keys-settings')
 const { $settingsScopeOverride } = await import('@/store/settings-scope')
 
 beforeEach(() => {
+  testConnectionId.set('test-conn')
+  mockGatewayRpc.mockReset()
   getEnvVars.mockResolvedValue({})
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     configurable: true,
@@ -176,5 +229,225 @@ describe('KeysSettings', () => {
       cleanup()
       $settingsScopeOverride.set(null)
     }
+  })
+
+  it('switches view across tools -> message -> settings -> message -> tools on the same mounted instance without hook errors', async () => {
+    getEnvVars.mockResolvedValue({
+      BRAVE_SEARCH_API_KEY: envVar('tool', { description: 'Search tool' }),
+      API_SERVER_TOKEN: envVar('setting', { description: 'API server token' })
+    })
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <KeysSettings view="tools" />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText('BRAVE SEARCH')).toBeTruthy()
+
+    // Switch to message
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={['/settings']}>
+          <KeysSettings view="message" />
+        </MemoryRouter>
+      )
+    })
+    expect(await screen.findByText('Enforcement Policy')).toBeTruthy()
+
+    // Switch to settings
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={['/settings']}>
+          <KeysSettings view="settings" />
+        </MemoryRouter>
+      )
+    })
+    expect(await screen.findByText('API SERVER')).toBeTruthy()
+
+    // Switch back to message
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={['/settings']}>
+          <KeysSettings view="message" />
+        </MemoryRouter>
+      )
+    })
+    expect(await screen.findByText('Enforcement Policy')).toBeTruthy()
+
+    // Switch back to tools
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={['/settings']}>
+          <KeysSettings view="tools" />
+        </MemoryRouter>
+      )
+    })
+    expect(await screen.findByText('BRAVE SEARCH')).toBeTruthy()
+  })
+
+  it('does not request env credentials when mounting or rendering message view', async () => {
+    getEnvVars.mockClear()
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <KeysSettings view="message" />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText('Enforcement Policy')).toBeTruthy()
+    expect(getEnvVars).not.toHaveBeenCalled()
+  })
+
+  it('clears sensitive one-time key and resets message state when switching active connection A -> B', async () => {
+    testConnectionId.set('conn-a')
+    mockGatewayRpc.mockImplementation((conn, _prof, method) => {
+      if (method === 'message_keys.list') {
+        if (conn === 'conn-a') {
+          return Promise.resolve({ items: [{ id: 'key-a', name: 'key-for-conn-a', created_at: '2026-09-26T00:00:00Z' }] })
+        }
+
+        return Promise.resolve({ items: [{ id: 'key-b', name: 'key-for-conn-b', created_at: '2026-09-26T00:00:00Z' }] })
+      }
+
+      if (method === 'message_keys.get_policy') {return Promise.resolve({ require_chat_key: false })}
+
+      if (method === 'message_keys.create') {
+        return Promise.resolve({ id: 'key-new', name: 'new-key', key: 'hmmsg_plaintext_conn_a_secret', created_at: '2026-09-26T00:00:00Z' })
+      }
+
+      return Promise.resolve({})
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <KeysSettings view="message" />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText('key-for-conn-a')).toBeTruthy()
+
+    // Create a key in conn-a to produce plaintext secret
+    fireEvent.click(await screen.findByText('Create Key'))
+    const input = await screen.findByPlaceholderText('e.g. openclaw-gateway, router-node')
+    fireEvent.change(input, { target: { value: 'new-key' } })
+    const createBtn = screen.getAllByRole('button', { name: /create/i }).pop()!
+    fireEvent.click(createBtn)
+
+    // Sensitive one-time key banner is shown for conn-a
+    expect(await screen.findByText('Copy Your New Message Key')).toBeTruthy()
+    expect(screen.getByDisplayValue('hmmsg_plaintext_conn_a_secret')).toBeDefined()
+
+    // Now switch active connection from conn-a to conn-b
+    await act(async () => {
+      testConnectionId.set('conn-b')
+    })
+
+    // Assert: Conn-B items are rendered, and Conn-A's one-time key is immediately wiped
+    expect(await screen.findByText('key-for-conn-b')).toBeTruthy()
+    expect(screen.queryByText('Copy Your New Message Key')).toBeNull()
+    expect(screen.queryByDisplayValue('hmmsg_plaintext_conn_a_secret')).toBeNull()
+    expect(screen.queryByText('key-for-conn-a')).toBeNull()
+
+    // Switch back to conn-a: one-time key must NEVER restore
+    await act(async () => {
+      testConnectionId.set('conn-a')
+    })
+    expect(await screen.findByText('key-for-conn-a')).toBeTruthy()
+    expect(screen.queryByText('Copy Your New Message Key')).toBeNull()
+    expect(screen.queryByDisplayValue('hmmsg_plaintext_conn_a_secret')).toBeNull()
+  })
+
+  it('discards an in-flight list response from connection A after switching to B', async () => {
+    testConnectionId.set('conn-a')
+    let resolveStaleListA!: (value: any) => void
+
+    const pendingListAPromise = new Promise(res => {
+      resolveStaleListA = res
+    })
+
+    mockGatewayRpc.mockImplementation((conn, _prof, method) => {
+      if (method === 'message_keys.list') {
+        if (conn === 'conn-a') {
+          return pendingListAPromise
+        }
+
+        return Promise.resolve({ items: [{ id: 'key-b', name: 'key-on-conn-b', created_at: '2026-09-26T00:00:00Z' }] })
+      }
+
+      if (method === 'message_keys.get_policy') {return Promise.resolve({ require_chat_key: false })}
+
+      return Promise.resolve({})
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <KeysSettings view="message" />
+      </MemoryRouter>
+    )
+
+    // Switch to conn-b before conn-a resolves
+    await act(async () => {
+      testConnectionId.set('conn-b')
+    })
+
+    expect(await screen.findByText('key-on-conn-b')).toBeTruthy()
+
+    // Now late resolve conn-a's pending list
+    await act(async () => {
+      resolveStaleListA({ items: [{ id: 'key-a-stale', name: 'STALE_KEY_A', created_at: '2026-09-26T00:00:00Z' }] })
+    })
+
+    // Assert: STALE_KEY_A must not be rendered or pollute conn-b
+    expect(screen.queryByText('STALE_KEY_A')).toBeNull()
+    expect(screen.getByText('key-on-conn-b')).toBeTruthy()
+  })
+
+  it('closes the revoke dialog and ignores its late response after switching connections', async () => {
+    testConnectionId.set('conn-a')
+    let resolveRevoke!: (value: { ok: boolean; removed: boolean }) => void
+
+    const pendingRevoke = new Promise<{ ok: boolean; removed: boolean }>(resolve => {
+      resolveRevoke = resolve
+    })
+
+    mockGatewayRpc.mockImplementation((conn, _prof, method) => {
+      if (method === 'message_keys.list') {
+        return Promise.resolve({
+          items: [{ id: `key-${conn}`, name: `key-on-${conn}`, created_at: '2026-09-26T00:00:00Z' }]
+        })
+      }
+
+      if (method === 'message_keys.get_policy') {return Promise.resolve({ require_chat_key: false })}
+
+      if (method === 'message_keys.revoke') {return pendingRevoke}
+
+      return Promise.resolve({})
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <KeysSettings view="message" />
+      </MemoryRouter>
+    )
+    expect(await screen.findByText('key-on-conn-a')).toBeTruthy()
+    const revokeButton = screen.getAllByRole('button').find(button => button.className.includes('text-destructive'))
+    expect(revokeButton).toBeDefined()
+    fireEvent.click(revokeButton!)
+    expect(await screen.findByText('Revoke Message Key')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
+    await waitFor(() => expect(mockGatewayRpc).toHaveBeenCalledWith('conn-a', 'default', 'message_keys.revoke', { id: 'key-conn-a' }))
+
+    await act(async () => {
+      testConnectionId.set('conn-b')
+    })
+    expect(await screen.findByText('key-on-conn-b')).toBeTruthy()
+    expect(screen.queryByText('Revoke Message Key')).toBeNull()
+
+    await act(async () => {
+      resolveRevoke({ ok: true, removed: true })
+    })
+    expect(screen.getByText('key-on-conn-b')).toBeTruthy()
+    expect(screen.queryByText('key-on-conn-a')).toBeNull()
+    expect(mockGatewayRpc).not.toHaveBeenCalledWith('conn-b', 'default', 'message_keys.revoke', expect.anything())
   })
 })

@@ -1969,6 +1969,96 @@
       }
     },
     {
+      "name": "message_keys.create",
+      "summary": "Create a new message API key (returns plaintext key once).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MessageKeyCreateParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MessageKeyCreateResult"
+        }
+      }
+    },
+    {
+      "name": "message_keys.get_policy",
+      "summary": "Get the require_chat_key enforcement policy for message API.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MessageKeysGetPolicyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MessageKeysPolicyResult"
+        }
+      }
+    },
+    {
+      "name": "message_keys.list",
+      "summary": "List all message API keys for the current profile (metadata only, no plaintext key).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MessageKeysListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MessageKeysListResult"
+        }
+      }
+    },
+    {
+      "name": "message_keys.revoke",
+      "summary": "Revoke a message API key by ID.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MessageKeyRevokeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MessageKeyRevokeResult"
+        }
+      }
+    },
+    {
+      "name": "message_keys.set_policy",
+      "summary": "Set the require_chat_key enforcement policy for message API.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/MessageKeysSetPolicyParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MessageKeysPolicyResult"
+        }
+      }
+    },
+    {
       "name": "model.disconnect",
       "summary": "Remove every credential (env keys and OAuth state) for a provider.",
       "params": [
@@ -23587,6 +23677,220 @@
           "already_streamed"
         ],
         "title": "MessageInterimPayload",
+        "type": "object"
+      },
+      "MessageKeyCreateParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "MessageKeyCreateParams",
+        "type": "object"
+      },
+      "MessageKeyCreateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "key"
+        ],
+        "title": "MessageKeyCreateResult",
+        "type": "object"
+      },
+      "MessageKeyItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "title": "MessageKeyItem",
+        "type": "object"
+      },
+      "MessageKeyRevokeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "MessageKeyRevokeParams",
+        "type": "object"
+      },
+      "MessageKeyRevokeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          }
+        },
+        "title": "MessageKeyRevokeResult",
+        "type": "object"
+      },
+      "MessageKeysGetPolicyParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "title": "MessageKeysGetPolicyParams",
+        "type": "object"
+      },
+      "MessageKeysListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "title": "MessageKeysListParams",
+        "type": "object"
+      },
+      "MessageKeysListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MessageKeyItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "MessageKeysListResult",
+        "type": "object"
+      },
+      "MessageKeysPolicyResult": {
+        "additionalProperties": false,
+        "properties": {
+          "require_chat_key": {
+            "title": "Require Chat Key",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "require_chat_key"
+        ],
+        "title": "MessageKeysPolicyResult",
+        "type": "object"
+      },
+      "MessageKeysSetPolicyParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "require_chat_key": {
+            "title": "Require Chat Key",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "require_chat_key"
+        ],
+        "title": "MessageKeysSetPolicyParams",
         "type": "object"
       },
       "MessageReactParams": {

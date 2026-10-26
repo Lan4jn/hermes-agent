@@ -101,6 +101,7 @@ const PROFILE_SCOPED_PREFIXES = [
   "/api/skills",
   "/api/tools/toolsets",
   "/api/config",
+  "/api/message/keys",
   "/api/env",
   "/api/mcp",
   "/api/messaging/platforms",
@@ -1436,6 +1437,26 @@ export const api = {
     fetchJSON<SkillHubScan>(
       `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     ),
+  getMessageKeys: () => fetchJSON<MessageKeyItem[]>("/api/message/keys"),
+  createMessageKey: (name: string) =>
+    fetchJSON<MessageKeyCreated>("/api/message/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  revokeMessageKey: (id: string) =>
+    fetchJSON<{ ok: boolean; removed: boolean }>(
+      `/api/message/keys/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+  getMessagePolicy: () =>
+    fetchJSON<MessagePolicyResponse>("/api/message/keys/policy"),
+  updateMessagePolicy: (require_chat_key: boolean) =>
+    fetchJSON<MessagePolicyResponse>("/api/message/keys/policy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ require_chat_key }),
+    }),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2808,4 +2829,18 @@ export interface AgentPluginUpdateResponse {
 export interface PluginProvidersPutRequest {
   memory_provider?: string;
   context_engine?: string;
+}
+
+export interface MessageKeyItem {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface MessageKeyCreated extends MessageKeyItem {
+  key: string;
+}
+
+export interface MessagePolicyResponse {
+  require_chat_key: boolean;
 }

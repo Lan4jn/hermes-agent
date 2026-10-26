@@ -87,9 +87,17 @@ FEISHU_WEBHOOK_AVAILABLE = aiohttp is not None
 from gateway.config import Platform, PlatformConfig
 from agent.i18n import t
 from gateway.platforms.base import (
-    BasePlatformAdapter, ExecApprovalPrompt, SendResult,
-    SUPPORTED_DOCUMENT_TYPES, cache_document_from_bytes_async, cache_image_from_url,
-    cache_audio_from_bytes_async, cache_image_from_bytes_async,
+    BasePlatformAdapter,
+    MessageEvent,
+    MessageType,
+    ProcessingOutcome,
+    SendResult,
+    SUPPORTED_DOCUMENT_TYPES,
+    is_text_inject_document,
+    cache_document_from_bytes,
+    cache_image_from_url,
+    cache_audio_from_bytes,
+    cache_image_from_bytes,
 )
 from gateway.platforms.event import MessageEvent, MessageType, ProcessingOutcome
 from gateway.status import acquire_scoped_lock
@@ -3083,7 +3091,7 @@ class FeishuAdapter(BasePlatformAdapter):
             if os.path.getsize(cached_path) > _MAX_TEXT_INJECT_BYTES:
                 return ""
             ext = Path(cached_path).suffix.lower()
-            if ext not in {".txt", ".md"} and media_type not in {"text/plain", "text/markdown"}:
+            if not is_text_inject_document(cached_path, media_type):
                 return ""
             content = Path(cached_path).read_text(encoding="utf-8-sig")
             display_name = self._display_name_from_cached_path(cached_path)

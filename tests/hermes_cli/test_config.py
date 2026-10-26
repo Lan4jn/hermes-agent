@@ -272,7 +272,7 @@ class TestSaveAndLoadRoundtrip:
             assert reloaded["model"] == "test/custom-model"
             assert reloaded["agent"]["max_turns"] == 42
 
-            saved = yaml.safe_load((tmp_path / "config.yaml").read_text())
+            saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
             assert saved["agent"]["max_turns"] == 42
             assert "max_turns" not in saved
 
@@ -1378,7 +1378,10 @@ class TestEnvWriteDenylist:
             "git_config_parameters", "ld_preload",
         ],
     )
-    def test_non_exec_near_misses_still_writable(self, allowed_key):
+    def test_non_exec_near_misses_still_writable(self, allowed_key, monkeypatch):
+        import hermes_cli.config as config_mod
+
+        monkeypatch.setattr(config_mod, "_IS_WINDOWS", False)
         save_env_value(allowed_key, "test-value-123")
         env = load_env()
         assert env[allowed_key] == "test-value-123"

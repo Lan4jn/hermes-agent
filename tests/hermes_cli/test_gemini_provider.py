@@ -136,6 +136,27 @@ class TestGeminiAgentInit:
         assert mock_client.called
         mock_openai.assert_not_called()
 
+    def test_gemini_resolve_provider_client_keeps_openai_for_non_native_base_url(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "AIzaSy_TEST_KEY")
+        monkeypatch.setenv("GEMINI_BASE_URL", "https://proxy.example.com/v1")
+        with patch("agent.gemini_native_adapter.GeminiNativeClient") as mock_client, \
+             patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            from agent.auxiliary_client import resolve_provider_client
+            resolve_provider_client("gemini")
+        mock_openai.assert_called_once()
+
+    def test_gemini_resolve_provider_client_uses_native_for_custom_proxy_base_url(self, monkeypatch):
+        """Custom proxy base_url (not ending with /v1 or /openai) should use GeminiNativeClient."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "AIzaSy_TEST_KEY")
+        monkeypatch.setenv("GEMINI_BASE_URL", "https://custom-proxy.example.com/v1beta")
+        with patch("agent.gemini_native_adapter.GeminiNativeClient") as mock_client, \
+             patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_client.return_value = MagicMock()
+            from agent.auxiliary_client import resolve_provider_client
+            resolve_provider_client("gemini")
+        assert mock_client.called
+        mock_openai.assert_not_called()
 
 # ── models.dev Integration ──
 

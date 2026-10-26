@@ -1923,9 +1923,7 @@ def _provider_supplied_client(agent, client_kwargs: dict) -> Any | None:
 
 
 def _profile_for_base_url(base_url: str) -> Any | None:
-    """Registered profile whose own base_url is a prefix of ``base_url`` (provider name did not
-    resolve). Prefix, not equality: the replaced copilot-acp branch keyed on
-    ``startswith("acp://copilot")``, so a path or user override under the same root must resolve."""
+    """Return the registered provider profile matching a base URL prefix."""
     try:
         from providers import list_providers
         candidates = list_providers()
@@ -1940,9 +1938,7 @@ def _profile_for_base_url(base_url: str) -> Any | None:
 
 
 def _ensure_copilot_headers(client_kwargs: dict) -> None:
-    """Defense-in-depth: recovery/restore rebuild from a snapshot without re-running header
-    wiring; a missing Copilot-Integration-Id causes model_not_available_for_integrator 400s.
-    Only ADD missing keys, never override."""
+    """Add required Copilot headers without overriding caller values."""
     try:
         if base_url_host_matches(str(client_kwargs.get("base_url", "")), "githubcopilot.com"):
             from hermes_cli.models import copilot_default_headers
@@ -2036,6 +2032,13 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
             agent.provider, reason, shared, agent._client_log_context(),
         )
         return provider_client
+    if getattr(agent, "provider", "") == "google-gemini-cli":
+        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+        return GeminiCloudCodeClient(
+            api_key=client_kwargs.get("api_key"),
+            base_url=client_kwargs.get("base_url"),
+            project_id=client_kwargs.get("project_id"),
+        )
     from agent.auxiliary_client import _GEMINI_NATIVE_PROVIDER_NAMES
     if agent.provider in _GEMINI_NATIVE_PROVIDER_NAMES:
         client = _gemini_native_client(agent, client_kwargs, httpx_verify, reason=reason, shared=shared)

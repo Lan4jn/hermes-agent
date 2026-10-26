@@ -256,15 +256,60 @@ test('a decrypted blob missing accessToken is rejected, not half-restored', () =
   assert.match(disk.logs[0], /missing accessToken/i)
 })
 
-test('an unwritable store file is logged rather than thrown', () => {
-  const disk = createFakeDisk(null, {
+test('an unwritable store refuses login completion and preserves the previous credential', () => {
+  const saved = createFakeDisk()
+
+  persistNativeTokenSet(GATEWAY, TOKENS, saved.io)
+  const before = saved.fileText()
+
+  const disk = createFakeDisk(before, {
     writeStoreText: () => {
-      throw new Error('EACCES: permission denied')
+      throw new Error(`EACCES: ${TOKENS.refreshToken}`)
     }
   })
 
-  assert.doesNotThrow(() => persistNativeTokenSet(GATEWAY, TOKENS, disk.io))
-  assert.match(disk.logs[0], /failed to persist tokens: EACCES/)
+  assert.throws(
+    () => persistNativeTokenSet(GATEWAY, { ...TOKENS, accessToken: 'AT-new' }, disk.io),
+    /credentials could not be saved/
+  )
+  assert.throws(() => persistNativeTokenSet(GATEWAY, null, disk.io), /credentials could not be removed/)
+  assert.equal(disk.fileText(), before)
+  assert.doesNotMatch(disk.logs.join('\n'), /RT-live-xyz789/)
+})
+
+test('clearing an absent native identity never writes even if the token store is unwritable', () => {
+  const disk = createFakeDisk(null, {
+    writeStoreText: () => assert.fail('Cookie-only login must not write a missing native identity')
+  })
+
+  assert.doesNotThrow(() => persistNativeTokenSet(GATEWAY, null, disk.io))
+})
+
+test('an unreadable existing store refuses mutation and restores its identity after access recovers', () => {
+  const saved = createFakeDisk()
+
+  persistNativeTokenSet(GATEWAY, TOKENS, saved.io)
+  const before = saved.fileText()!
+  let unreadable = true
+
+  const disk = createFakeDisk(before, {
+    readStoreText: () => {
+      if (unreadable) {
+        throw Object.assign(new Error(`EACCES: ${TOKENS.refreshToken}`), { code: 'EACCES' })
+      }
+
+      return before
+    }
+  })
+
+  for (const mutation of [null, { ...TOKENS, accessToken: 'AT-new' }]) {
+    assert.throws(() => persistNativeTokenSet(GATEWAY, mutation, disk.io), /credentials could not be read/)
+  }
+
+  assert.equal(disk.fileText(), before)
+  unreadable = false
+  assert.deepEqual(loadNativeTokenSet(GATEWAY, disk.io), TOKENS)
+  assert.doesNotMatch(disk.logs.join('\n'), /RT-live-xyz789/)
 })
 
 test('an unusable keychain fails the write loudly and writes nothing', () => {

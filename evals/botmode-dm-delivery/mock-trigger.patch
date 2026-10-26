@@ -5,7 +5,7 @@ index 6dffd2cf0f388..09c6de07d81b2 100644
 @@ -500,6 +500,21 @@ export function startMockServer(options: MockServerOptions = {}): Promise<MockSe
              _receivedUserTexts.push(userText)
            }
- 
+
 +          const dmMatch = userText.match(/E2E_DM\(([^)]+)\)\[([\s\S]*)\]/)
 +          const lastUserIndex = messages.lastIndexOf(lastUserMsg)
 +          if (dmMatch && !messages.slice(lastUserIndex + 1).some(m => m?.role === 'tool')) {
