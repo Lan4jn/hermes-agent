@@ -134,10 +134,17 @@ export const zh: Translations = {
     sharedMetricsReaskBody:
       "再次询问：旧版本可能在你看到此问题之前就已保存了“不用了”。",
     sharedMetricsShare: "发送给 Nous",
-    sharedMetricsLocal: "仅保留在本地",
     sharedMetricsOff: "不用了",
     sharedMetricsDetails: "详细信息",
     sharedMetricsSaveFailed: "无法保存你的选择",
+  },
+
+  // ── System page: Memory section ──
+  systemMemory: {
+    activeProvider: "当前记忆提供方",
+    noProvider: "无 — 仅内置",
+    builtinLayer: "内置层",
+    builtinNote: "MEMORY.md 和 USER.md 是 Hermes 自己的记忆，独立于任何外部提供方。两者默认都会载入会话；配置开关 (memory.memory_enabled / memory.user_profile_enabled) 可分别关闭。外部提供方是对它们的补充，绝不会取代它们。",
   },
   status: {
     actionFailed: "操作失败",
@@ -463,6 +470,10 @@ export const zh: Translations = {
     updateGit: "git pull",
     updateConsentBody: (name        , sha        ) =>
       `新版本目录中锁定包含 ${name} (${sha}) 引入了已安装版本所没有的暴露面。仅在信任来源的前提下应用该更新：`,
+    updateScanBody: (name: string, count: number) =>
+      `安全扫描在 ${name} 的新代码中发现了 ${count} 项问题。仅在信任来源时继续更新：`,
+    updateScanBlocked: (name: string) =>
+      `安全扫描评估 ${name} 的新代码存在危险。更新未应用。`,
     versionBadge: "版本",
     showInSidebar: "在侧边栏显示",
     hideFromSidebar: "从侧边栏隐藏",

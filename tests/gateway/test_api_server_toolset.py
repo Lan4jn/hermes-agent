@@ -26,9 +26,7 @@ class TestHermesApiServerToolset:
 
     def test_toolset_includes_browser_tools(self):
         tools = resolve_toolset("hermes-api-server")
-        for tool in ["browser_navigate", "browser_snapshot", "browser_click",
-                      "browser_type", "browser_scroll", "browser_back",
-                      "browser_press"]:
+        for tool in ["browser_cdp", "browser_dialog", "browser_exec", "browser_vault"]:
             assert tool in tools, f"Missing browser tool: {tool}"
 
     def test_toolset_includes_configured_hermes_peer_messaging(self):

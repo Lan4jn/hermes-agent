@@ -54,7 +54,7 @@ export const channelsEn: ChannelsTranslations = {
   failedToSave: (error) => `Failed to save: ${error}`,
   failedToRestart: (error) => `Failed to restart: ${error}`,
   gatewayRestarting: "Gateway restarting…",
-  whatsappPairWithQr: "Pair with QR code",
+  whatsappPairWithQr: "Pair with QR",
   whatsappExistingConfigured: "An existing WhatsApp session is already configured. Starting a new pairing session will disconnect your previous session once confirmed.",
   whatsappMode: "Mode",
   whatsappBot: "Bot (dedicated number)",

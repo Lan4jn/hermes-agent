@@ -141,10 +141,17 @@ export const zhHant: Translations = {
     sharedMetricsReaskBody:
       "再次詢問：舊版本可能在你看到此問題之前就已儲存了「不用了」。",
     sharedMetricsShare: "傳送給 Nous",
-    sharedMetricsLocal: "僅保留在本地",
     sharedMetricsOff: "不用了",
     sharedMetricsDetails: "詳細資訊",
     sharedMetricsSaveFailed: "無法儲存你的選擇",
+  },
+
+  // ── System page: Memory section ──
+  systemMemory: {
+    activeProvider: "目前記憶提供者",
+    noProvider: "無 — 僅內建",
+    builtinLayer: "內建層",
+    builtinNote: "MEMORY.md 和 USER.md 是 Hermes 自己的記憶，獨立於任何外部提供者。兩者預設都會載入工作階段；設定開關 (memory.memory_enabled / memory.user_profile_enabled) 可分別關閉。外部提供者是對它們的補充，絕不會取代它們。",
   },
 
   status: {
@@ -501,6 +508,10 @@ export const zhHant: Translations = {
 
     updateConsentBody: (name        , sha        ) =>
       `新版本目錄中鎖定包含 ${name} (${sha}) 引入了已安裝版本所沒有的暴露面。僅在信任來源的前提下應用該更新：`,
+    updateScanBody: (name: string, count: number) =>
+      `安全性掃描在 ${name} 的新程式碼中發現了 ${count} 項問題。僅在信任來源時繼續更新：`,
+    updateScanBlocked: (name: string) =>
+      `安全性掃描評估 ${name} 的新程式碼存在危險。更新未套用。`,
     catalogHeading: "外掛目錄",
     catalogHint: "精選並由 Nous 團隊審查、精確鎖定 commit 的外掛。從此安裝可確保供應鏈安全。",
     catalogSearchPlaceholder: "搜尋目錄...",
